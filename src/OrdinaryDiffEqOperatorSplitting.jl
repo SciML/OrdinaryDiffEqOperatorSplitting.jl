@@ -22,8 +22,6 @@ include("integrator.jl")
 include("solver.jl")
 include("utils.jl")
 
-export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov,
-    DiffEqBase, init, TimeChoiceIterator,
-    NoExternalSynchronization
+export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov
 
 end
