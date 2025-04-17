@@ -4,7 +4,7 @@ using Test
 
 import UnPack: @unpack
 
-import SciMLBase: SciMLBase, ReturnCode,
+import SciMLBase: SciMLBase, ReturnCode
 import DiffEqBase: DiffEqBase, ODEFunction, ODEProblem
 using OrdinaryDiffEqTsit5
 

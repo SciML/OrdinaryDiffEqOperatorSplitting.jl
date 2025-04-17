@@ -491,13 +491,15 @@ end
 
 function build_subintegrator_tree_with_cache(
     prob::OperatorSplittingProblem, alg::AbstractOperatorSplittingAlgorithm,
+    f::GenericSplitFunction, p::Tuple,
     uprevouter::AbstractVector, uouter::AbstractVector,
     solution_indices,
     t0, dt, tf,
     tstops, saveat, d_discontinuities, callback,
     adaptive, verbose,
+    save_end=false,
+    controller=nothing,
 )
-    (;f, p) = prob
     subintegrator_tree_with_caches = ntuple(i ->
         build_subintegrator_tree_with_cache(
             prob,
