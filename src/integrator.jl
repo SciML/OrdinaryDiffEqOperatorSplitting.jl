@@ -545,13 +545,13 @@ function build_subintegrator_tree_with_cache(
         SciMLBase.ODEProblem(f, u, (t0, min(t0+dt,tf)), p),
         alg;
         dt,
-        tstops,
         saveat = (),
         d_discontinuities,
         save_everystep = false,
         advance_to_tstop = false,
         adaptive,
         controller,
+        verbose
     )
 
     return integrator, integrator.cache
