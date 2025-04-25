@@ -542,7 +542,7 @@ function build_subintegrator_tree_with_cache(
     u = @view uouter[solution_indices]
 
     integrator = DiffEqBase.__init(
-        SciMLBase.ODEProblem(f, u, (t0, tf), p),
+        SciMLBase.ODEProblem(f, u, (t0, min(t0+dt,tf)), p),
         alg;
         dt,
         tstops,
