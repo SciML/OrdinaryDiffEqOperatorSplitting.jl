@@ -96,7 +96,6 @@ function DiffEqBase.__init(
 
     callback = DiffEqBase.CallbackSet(callback)
 
-    # There should be a dispatch which calls some __init dispatch on the leaf algorithms
     subintegrator_tree, cache = build_subintegrator_tree_with_cache(
         prob, alg,
         uprev, u,
@@ -301,7 +300,7 @@ end
     stepsize_controller!(::OperatorSplittingIntegrator)
 Updates the controller using the current state of the integrator if the operator splitting algorithm is adaptive.
 """
-@inline function stepsize_controller!(integrator::OperatorSplittingIntegrator) 
+@inline function stepsize_controller!(integrator::OperatorSplittingIntegrator)
     algorithm = integrator.alg
     DiffEqBase.isadaptive(algorithm) || return nothing
     stepsize_controller!(integrator, algorithm)
@@ -311,7 +310,7 @@ end
     step_accept_controller!(::OperatorSplittingIntegrator)
 Updates `_dt` of the integrator if the step is accepted and the operator splitting algorithm is adaptive.
 """
-@inline function step_accept_controller!(integrator::OperatorSplittingIntegrator) 
+@inline function step_accept_controller!(integrator::OperatorSplittingIntegrator)
     algorithm = integrator.alg
     DiffEqBase.isadaptive(algorithm) || return nothing
     step_accept_controller!(integrator, algorithm, nothing)
@@ -321,7 +320,7 @@ end
     step_reject_controller!(::OperatorSplittingIntegrator)
 Updates `_dt` of the integrator if the step is rejected and the the operator splitting algorithm is adaptive.
 """
-@inline function step_reject_controller!(integrator::OperatorSplittingIntegrator) 
+@inline function step_reject_controller!(integrator::OperatorSplittingIntegrator)
     algorithm = integrator.alg
     DiffEqBase.isadaptive(algorithm) || return nothing
     step_reject_controller!(integrator, algorithm, nothing)
@@ -467,8 +466,9 @@ function build_subintegrator_tree_with_cache(
     (; f, p) = prob
     subintegrator_tree_with_caches = ntuple(i ->
         build_subintegrator_tree_with_cache(
-            get_operator(f, i),
+            prob,
             alg.inner_algs[i],
+            get_operator(f, i),
             p[i],
             uprevouter, uouter,
             f.solution_indices[i],
@@ -490,17 +490,21 @@ function build_subintegrator_tree_with_cache(
 end
 
 function build_subintegrator_tree_with_cache(
-    f::GenericSplitFunction, alg::AbstractOperatorSplittingAlgorithm, p::Tuple,
+    prob::OperatorSplittingProblem, alg::AbstractOperatorSplittingAlgorithm,
+    f::GenericSplitFunction, p::Tuple,
     uprevouter::AbstractVector, uouter::AbstractVector,
     solution_indices,
     t0, dt, tf,
     tstops, saveat, d_discontinuities, callback,
     adaptive, verbose,
+    save_end=false,
+    controller=nothing,
 )
     subintegrator_tree_with_caches = ntuple(i ->
         build_subintegrator_tree_with_cache(
-            get_operator(f, i),
+            prob,
             alg.inner_algs[i],
+            get_operator(f, i),
             p[i],
             uprevouter, uouter,
             f.solution_indices[i],
@@ -521,6 +525,36 @@ function build_subintegrator_tree_with_cache(
         uprev = uprev, u = u,
         inner_caches = inner_caches,
     )
+end
+
+function build_subintegrator_tree_with_cache(
+    prob::OperatorSplittingProblem, alg::SciMLBase.AbstractODEAlgorithm,
+    f::F, p::P,
+    uprevouter::S, uouter::S,
+    solution_indices,
+    t0::T, dt::T, tf::T,
+    tstops, saveat, d_discontinuities, callback,
+    adaptive, verbose,
+    save_end=false,
+    controller=nothing,
+) where {S, T, P, F}
+    uprev = @view uprevouter[solution_indices]
+    u = @view uouter[solution_indices]
+
+    integrator = DiffEqBase.__init(
+        SciMLBase.ODEProblem(f, u, (t0, min(t0+dt,tf)), p),
+        alg;
+        dt,
+        saveat = (),
+        d_discontinuities,
+        save_everystep = false,
+        advance_to_tstop = false,
+        adaptive,
+        controller,
+        verbose
+    )
+
+    return integrator, integrator.cache
 end
 
 forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, subintegrator_tree::Tuple, solution_indices::Tuple, synchronizers::Tuple) = nothing
