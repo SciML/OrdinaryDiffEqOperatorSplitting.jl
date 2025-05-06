@@ -42,7 +42,7 @@ makedocs(
 
 # Deploy built documentation
 deploydocs(
-    repo="github.com/termi-official/OrdinaryDiffEqOperatorSplitting.jl",
+    repo="github.com/SciML/OrdinaryDiffEqOperatorSplitting.jl",
     push_preview=true,
     devbranch="main",
     versions = [
