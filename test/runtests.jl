@@ -10,6 +10,8 @@ using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqTsit5
 
 @testset "Operator Splitting API" begin
+    dt = 0.01π
+
     # Reference
     function ode_true(du, u, p, t)
         du .= -0.1u
@@ -43,7 +45,8 @@ using OrdinaryDiffEqTsit5
     u0 = [0.7611944793397108
         0.9059606424982555
         0.5755174199139956]
-    tspan = (0.0,100.0)
+    # tspan = (0.0,100.0)
+    tspan = (0.0,ceil(Int,100.0/dt)*dt)
     prob1 = OperatorSplittingProblem(fsplit1, u0, tspan)
 
     # Now some recursive splitting
@@ -83,8 +86,6 @@ using OrdinaryDiffEqTsit5
     fsplit_force_half = GenericSplitFunction((f1,f2half), (f1dofs, f2dofs))
     prob_force_half = OperatorSplittingProblem(fsplit_force_half, u0, tspan)
 
-    # dt = 0.01π
-    dt = 0.1
     @testset "OperatorSplitting" begin
         for TimeStepperType in (LieTrotterGodunov,)
             @testset "Solver type $TimeStepperType | $tstepper" for (prob,tstepper) in (
@@ -107,13 +108,14 @@ using OrdinaryDiffEqTsit5
                 ufinal = copy(integrator.u)
                 @test ufinal ≉ u0 # Make sure the solve did something
                 @test integrator.t ≈ tspan[2]
+                @test integrator.dt ≈ dt
 
                 DiffEqBase.reinit!(integrator)
                 @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-                for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, 0.0:5.0:100.0)
-                end
+                for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2]) end
                 @test  isapprox(ufinal, integrator.u, atol=1e-12)
                 @test integrator.t ≈ tspan[2]
+                @test integrator.dt ≈ dt
 
                 DiffEqBase.reinit!(integrator)
                 @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -121,12 +123,14 @@ using OrdinaryDiffEqTsit5
                 end
                 @test  isapprox(ufinal, integrator.u, atol=1e-12)
                 @test integrator.t ≈ tspan[2]
+                @test integrator.dt ≈ dt
 
                 DiffEqBase.reinit!(integrator)
                 @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
                 DiffEqBase.solve!(integrator)
                 @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
                 @test integrator.t ≈ tspan[2]
+                @test integrator.dt ≈ dt
 
                 # @testset "NaNs" begin
                 #     integrator_NaN = DiffEqBase.init(prob_NaN, tstepper, dt=dt, verbose=true, alias_u0=false)
