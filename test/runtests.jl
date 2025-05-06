@@ -97,7 +97,7 @@ using OrdinaryDiffEqTsit5
 
             for (tstepper1, tstepper_inner, tstepper2) in (
                     (timestepper, timestepper_inner, timestepper2),
-                    )
+                )
                 # The remaining code works as usual.
                 integrator = DiffEqBase.init(prob, tstepper1, dt=dt, verbose=true, alias_u0=false)
                 @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -106,22 +106,23 @@ using OrdinaryDiffEqTsit5
                 ufinal = copy(integrator.u)
                 @test ufinal ≉ u0 # Make sure the solve did something
 
-                # DiffEqBase.reinit!(integrator)
-                # @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
+                DiffEqBase.reinit!(integrator)
+                @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
                 # for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, 0.0:5.0:100.0)
                 # end
-                # @test  isapprox(ufinal, integrator.u, atol=1e-8)
+                DiffEqBase.solve!(integrator)
+                @test  isapprox(ufinal, integrator.u, atol=1e-12)
 
-                # DiffEqBase.reinit!(integrator)
-                # @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-                # for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
-                # end
-                # @test  isapprox(ufinal, integrator.u, atol=1e-8)
+                DiffEqBase.reinit!(integrator)
+                @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
+                for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
+                end
+                @test  isapprox(ufinal, integrator.u, atol=1e-12)
 
-                # DiffEqBase.reinit!(integrator)
-                # @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-                # DiffEqBase.solve!(integrator)
-                # @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
+                DiffEqBase.reinit!(integrator)
+                @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
+                DiffEqBase.solve!(integrator)
+                @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
 
                 integrator2 = DiffEqBase.init(prob2, tstepper2, dt=dt, verbose=true, alias_u0=false)
                 @test integrator2.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -130,16 +131,16 @@ using OrdinaryDiffEqTsit5
                 ufinal2 = copy(integrator2.u)
                 @test ufinal2 ≉ u0 # Make sure the solve did something
 
-                # DiffEqBase.reinit!(integrator2)
-                # @test integrator2.sol.retcode == DiffEqBase.ReturnCode.Default
-                # for (u, t) in DiffEqBase.TimeChoiceIterator(integrator2, 0.0:5.0:100.0)
-                # end
-                # @test isapprox(ufinal2, integrator2.u, atol=1e-8)
+                DiffEqBase.reinit!(integrator2)
+                @test integrator2.sol.retcode == DiffEqBase.ReturnCode.Default
+                for (u, t) in DiffEqBase.TimeChoiceIterator(integrator2, 0.0:5.0:100.0)
+                end
+                @test isapprox(ufinal2, integrator2.u, atol=1e-12)
 
-                # DiffEqBase.reinit!(integrator2)
-                # @test integrator2.sol.retcode == DiffEqBase.ReturnCode.Default
-                # DiffEqBase.solve!(integrator2)
-                # @test integrator2.sol.retcode == DiffEqBase.ReturnCode.Success
+                DiffEqBase.reinit!(integrator2)
+                @test integrator2.sol.retcode == DiffEqBase.ReturnCode.Default
+                DiffEqBase.solve!(integrator2)
+                @test integrator2.sol.retcode == DiffEqBase.ReturnCode.Success
                 @testset "NaNs" begin
                     integrator_NaN = DiffEqBase.init(prob_NaN, tstepper1, dt=dt, verbose=true, alias_u0=false)
                     @test integrator_NaN.sol.retcode == DiffEqBase.ReturnCode.Default
