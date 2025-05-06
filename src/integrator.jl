@@ -29,8 +29,8 @@ mutable struct OperatorSplittingIntegrator{
     p::pType
     t::tType # Current time
     tprev::tType
-    dt::tType # This is the time step length which which we intend to advance
-    _dt::tType # This is the time step length which which we use during time marching
+    dt::tType # This is the time step length which which we use during time marching
+    _dt::tType # This is the proposed time step length
     const dtchangeable::Bool # Indicator whether _dt can be changed
     tstops::heapType
     _tstops::tstopsType # argument to __init used as default argument to reinit!
@@ -73,7 +73,7 @@ function DiffEqBase.__init(
     dt = tf > t0 ? dt : -dt
     tType = typeof(dt)
 
-    dtchangeable = DiffEqBase.isadaptive(alg)
+    dtchangeable = true # DiffEqBase.isadaptive(alg)
 
     if tstops isa AbstractArray || tstops isa Tuple || tstops isa Number
         _tstops = nothing
@@ -244,7 +244,7 @@ function SciMLBase.check_error(integrator::OperatorSplittingIntegrator)
 
     verbose = true # integrator.opts.verbose
 
-    if DiffEqBase.NAN_CHECK(integrator._dt) # replace with https://github.com/SciML/OrdinaryDiffEq.jl/blob/373a8eec8024ef1acc6c5f0c87f479aa0cf128c3/lib/OrdinaryDiffEqCore/src/iterator_interface.jl#L5-L6 after moving to sciml integrators
+    if DiffEqBase.NAN_CHECK(integrator._dt) || DiffEqBase.NAN_CHECK(integrator.dt) # replace with https://github.com/SciML/OrdinaryDiffEq.jl/blob/373a8eec8024ef1acc6c5f0c87f479aa0cf128c3/lib/OrdinaryDiffEqCore/src/iterator_interface.jl#L5-L6 after moving to sciml integrators
         if verbose
             @warn("NaN dt detected. Likely a NaN value in the state, parameters, or derivative value caused this outcome.")
         end
@@ -376,8 +376,7 @@ function DiffEqBase.postamble!(integrator::OperatorSplittingIntegrator)
 end
 
 function __step!(integrator)
-    (; dtchangeable, tstops) = integrator
-    _dt = DiffEqBase.get_dt(integrator)
+    (; dtchangeable, tstops, _dt) = integrator
 
     # update dt before incrementing u; if dt is changeable and there is
     # a tstop within dt, reduce dt to tstop - t
@@ -420,11 +419,11 @@ function advance_solution_to!(outer_integrator::OperatorSplittingIntegrator, int
     SciMLBase.step!(integrator, dt, true)
 end
 
-DiffEqBase.get_dt(integrator::OperatorSplittingIntegrator) = integrator._dt
+DiffEqBase.get_dt(integrator::OperatorSplittingIntegrator) = integrator.dt
 function set_dt!(integrator::OperatorSplittingIntegrator, dt)
     # TODO: figure out interface for recomputing other objects (linear operators, etc)
     dt <= zero(dt) && error("dt must be positive")
-    integrator._dt = dt
+    integrator.dt = dt
 end
 
 function DiffEqBase.add_tstop!(integrator::OperatorSplittingIntegrator, t)

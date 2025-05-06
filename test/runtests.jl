@@ -45,8 +45,7 @@ using OrdinaryDiffEqTsit5
     u0 = [0.7611944793397108
         0.9059606424982555
         0.5755174199139956]
-    # tspan = (0.0,100.0)
-    tspan = (0.0,ceil(Int,100.0/dt)*dt)
+    tspan = (0.0,100.0)
     prob1 = OperatorSplittingProblem(fsplit1, u0, tspan)
 
     # Now some recursive splitting
@@ -108,14 +107,14 @@ using OrdinaryDiffEqTsit5
                 ufinal = copy(integrator.u)
                 @test ufinal ≉ u0 # Make sure the solve did something
                 @test integrator.t ≈ tspan[2]
-                @test integrator.dt ≈ dt
+                @test integrator._dt ≈ dt
 
                 DiffEqBase.reinit!(integrator)
                 @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
                 for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2]) end
                 @test  isapprox(ufinal, integrator.u, atol=1e-12)
                 @test integrator.t ≈ tspan[2]
-                @test integrator.dt ≈ dt
+                @test integrator._dt ≈ dt
 
                 DiffEqBase.reinit!(integrator)
                 @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -123,14 +122,14 @@ using OrdinaryDiffEqTsit5
                 end
                 @test  isapprox(ufinal, integrator.u, atol=1e-12)
                 @test integrator.t ≈ tspan[2]
-                @test integrator.dt ≈ dt
+                @test integrator._dt ≈ dt
 
                 DiffEqBase.reinit!(integrator)
                 @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
                 DiffEqBase.solve!(integrator)
                 @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
                 @test integrator.t ≈ tspan[2]
-                @test integrator.dt ≈ dt
+                @test integrator._dt ≈ dt
 
                 # @testset "NaNs" begin
                 #     integrator_NaN = DiffEqBase.init(prob_NaN, tstepper, dt=dt, verbose=true, alias_u0=false)
