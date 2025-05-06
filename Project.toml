@@ -24,8 +24,9 @@ Unrolled = "0.1.5"
 julia = "1.9"
 
 [extras]
+OrdinaryDiffEqLowOrderRK = "1344f307-1e59-4825-a18e-ace9aa3fa4c6"
 OrdinaryDiffEqTsit5 = "b1df2697-797e-41e3-8120-5422d3b24e4a"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "OrdinaryDiffEqTsit5"]
+test = ["Test", "OrdinaryDiffEqLowOrderRK", "OrdinaryDiffEqTsit5"]
