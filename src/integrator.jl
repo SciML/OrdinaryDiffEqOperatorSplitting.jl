@@ -166,6 +166,9 @@ function DiffEqBase.reinit!(
     end
 
     subreinit!(
+        integrator.f,
+        u0,
+        1:length(u0),
         integrator.subintegrator_tree;
         t0, tf,
         erase_sol,
@@ -177,18 +180,26 @@ function DiffEqBase.reinit!(
 end
 
 function subreinit!(
+    f,
+    u0,
+    solution_indices,
     subintegrator::DiffEqBase.DEIntegrator;
     kwargs...
 )
-    DiffEqBase.reinit!(subintegrator, subintegrator.uprev; kwargs...)
+    DiffEqBase.reinit!(subintegrator, u0[solution_indices]; kwargs...)
 end
 
-function subreinit!(
+@unroll function subreinit!(
+    f,
+    u0,
+    solution_indices,
     subintegrators::Tuple;
     kwargs...
 )
-    for subintegrator in subintegrators
-        subreinit!(subintegrator; kwargs...)
+    i = 1
+    @unroll for subintegrator in subintegrators
+        subreinit!(get_operator(f, i), u0, f.solution_indices[i], subintegrator; kwargs...)
+        i += 1
     end
 end
 
