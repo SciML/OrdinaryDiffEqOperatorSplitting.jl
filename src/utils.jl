@@ -53,6 +53,7 @@ backward_sync_internal!(outer_integrator::OperatorSplittingIntegrator, inner_int
 function forward_sync_internal!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices)
     @views uouter = outer_integrator.u[solution_indices]
     sync_vectors!(inner_integrator.uprev, uouter)
+    sync_vectors!(inner_integrator.u, uouter)
 end
 function backward_sync_internal!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices)
     @views uouter = outer_integrator.u[solution_indices]
