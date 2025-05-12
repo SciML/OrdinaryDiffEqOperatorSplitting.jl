@@ -25,16 +25,13 @@ makedocs(
     warnonly = true,
     draft = false,
     pages = Any[
-            "Home" => "index.md",
-            "Theory Manual" => "topics/time-integration.md",
-            # "API Reference" => [
-            #     "Overview" => "api-reference/index.md",
-            # ],
-            "Developer Documentation" => [
-                "Overview" => "devdocs/index.md",
-            ],
-            "references.md",
-        ],
+        "Home" => "index.md",
+        "usage/index.md",
+        "Theory Manual" => "topics/time-integration.md",
+        "api-reference/index.md",
+        "devdocs/index.md",
+        "references.md",
+    ],
     plugins = [
         bibtex_plugin,
     ]
