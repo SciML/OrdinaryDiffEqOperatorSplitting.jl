@@ -16,6 +16,8 @@ abstract type AbstractOperatorSplitFunction <: DiffEqBase.AbstractODEFunction{tr
 abstract type AbstractOperatorSplittingAlgorithm end
 abstract type AbstractOperatorSplittingCache end
 
+@inline DiffEqBase.isadaptive(::AbstractOperatorSplittingAlgorithm) = false
+
 include("function.jl")
 include("problem.jl")
 include("integrator.jl")

@@ -23,23 +23,49 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     return tstops, saveat
 end
 
+"""
+    need_sync(a, b)
+
+This function determines whether it is necessary to synchronize two objects with any solution information.
+A possible reason when no syncronization is necessary might be that the vectors alias each other in memory.
+"""
+need_sync
 
 need_sync(a::AbstractVector, b::AbstractVector) = true
 need_sync(a::SubArray, b::AbstractVector)       = a.parent !== b
 need_sync(a::AbstractVector, b::SubArray)       = a !== b.parent
 need_sync(a::SubArray, b::SubArray)             = a.parent !== b.parent
 
+"""
+    sync_vectors!(a, b)
+
+Copies the information in object b into object a, if syncronization is necessary.
+"""
 function sync_vectors!(a, b)
     if need_sync(a, b) && a !== b
         a .= b
     end
 end
 
+"""
+     forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
+
+This function is responsible to copy the solution and parameters of the outer integrator with the information given into the inner integrator.
+The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
+The `solution_indices` are global indices in the outer integrators solution vectors.
+"""
 function forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
     forward_sync_internal!(outer_integrator, inner_integrator, solution_indices)
     forward_sync_external!(outer_integrator, inner_integrator, sync)
 end
 
+"""
+     forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
+
+This function is responsible to copy the solution of the inner integrator back into outer integrator.
+The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
+The `solution_indices` are global indices in the outer integrators solution vectors.
+"""
 function backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, sync)
     backward_sync_internal!(outer_integrator, inner_integrator, sync)
 end

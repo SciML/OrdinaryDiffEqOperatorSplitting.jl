@@ -1,11 +1,19 @@
-# API Reference Overview
+# API Reference
 
-```@meta
-DocTestSetup = :(using OrdinaryDiffEqOperatorSplitting)
+## Problems
+
+```@docs
+OperatorSplittingProblem
 ```
+
+## Functions
+
+```@docs
+GenericSplitFunction
+```
+
+## Solver
 
 ```@docs
 LieTrotterGodunov
-GenericSplitFunction
-OperatorSplittingIntegrator
 ```
