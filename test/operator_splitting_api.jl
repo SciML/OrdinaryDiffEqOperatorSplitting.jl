@@ -1,7 +1,7 @@
 using OrdinaryDiffEqOperatorSplitting
 using Test
 
-import SciMLBase: SciMLBase, ReturnCode
+import SciMLBase: ReturnCode
 import DiffEqBase: DiffEqBase, ODEFunction, ODEProblem
 using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqTsit5
