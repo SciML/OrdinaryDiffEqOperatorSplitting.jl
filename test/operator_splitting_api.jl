@@ -1,5 +1,4 @@
 using OrdinaryDiffEqOperatorSplitting
-import OrdinaryDiffEqOperatorSplitting as OS
 using Test
 
 import UnPack: @unpack
