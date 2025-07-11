@@ -1,8 +1,6 @@
 using OrdinaryDiffEqOperatorSplitting
 using Test
 
-import UnPack: @unpack
-
 import SciMLBase: SciMLBase, ReturnCode
 import DiffEqBase: DiffEqBase, ODEFunction, ODEProblem
 using OrdinaryDiffEqLowOrderRK
