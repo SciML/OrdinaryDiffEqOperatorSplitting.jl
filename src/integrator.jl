@@ -61,7 +61,7 @@ function DiffEqBase.__init(
     advance_to_tstop = false,
     adaptive = DiffEqBase.isadaptive(alg),
     controller = nothing,
-    alias_u0 = true,
+    alias_u0 = false,
     verbose = true,
     kwargs...,
 )
@@ -494,7 +494,7 @@ function build_subintegrator_tree_with_cache(
 
     # TODO fix mixed device type problems we have to be smarter
     return subintegrator_tree, init_cache(f, alg;
-        uprev=uprevouter, u=uouter, alias_u=true,
+        uprev=uprevouter, u=uouter, alias_u=false,
         inner_caches = caches,
     )
 end

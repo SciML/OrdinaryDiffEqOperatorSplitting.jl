@@ -1,3 +1,5 @@
+using OrdinaryDiffEqOperatorSplitting
+import OrdinaryDiffEqOperatorSplitting as OS
 using Test
 
 import UnPack: @unpack
@@ -6,11 +8,6 @@ import SciMLBase: SciMLBase, ReturnCode
 import DiffEqBase: DiffEqBase, ODEFunction, ODEProblem
 using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqTsit5
-
-@testset "OrdinaryDiffEqOperatorSplitting Tests" begin
-    include("operator_splitting_api.jl")
-    include("alias_u0.jl")
-end
 
 @testset "Operator Splitting API" begin
     # Reference
@@ -148,7 +145,7 @@ end
             fsplit_NaN = GenericSplitFunction((f1,f_NaN), (f1dofs, f_NaN_dofs))
             prob_NaN = OperatorSplittingProblem(fsplit_NaN, u0, tspan)
 
-
+            
             for TimeStepperType in (LieTrotterGodunov,)
                 @testset "Solver type $TimeStepperType | $tstepper" for (prob,tstepper) in (
                     (prob1,TimeStepperType((Euler(), Euler()))),
