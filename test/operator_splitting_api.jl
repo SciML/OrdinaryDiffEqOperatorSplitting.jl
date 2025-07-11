@@ -129,7 +129,7 @@ using OrdinaryDiffEqTsit5
             end
         end
 
-        @testset "Instbility detectioon" begin
+        @testset "Instability detection" begin
             dt = 0.01π
 
             function ode_NaN(du, u, p, t)
