@@ -20,7 +20,7 @@ mutable struct OperatorSplittingIntegrator{
     subintTreeType,
     solidxTreeType,
     syncTreeType,
-} <: DiffEqBase.AbstractODEIntegrator{algType,true,uType,tType}
+} <: DiffEqBase.AbstractODEIntegrator{algType, true, uType, tType}
     const f::fType
     const alg::algType
     u::uType # Master Solution
@@ -53,16 +53,16 @@ function DiffEqBase.__init(
     alg::AbstractOperatorSplittingAlgorithm,
     args...;
     dt,
-    tstops=(),
-    saveat=(),
-    d_discontinuities=(),
-    save_everystep=false,
-    callback=nothing,
-    advance_to_tstop=false,
-    adaptive=DiffEqBase.isadaptive(alg),
-    controller=nothing,
-    alias_u0=false,
-    verbose=true,
+    tstops = (),
+    saveat = (),
+    d_discontinuities = (),
+    save_everystep = false,
+    callback = nothing,
+    advance_to_tstop = false,
+    adaptive = DiffEqBase.isadaptive(alg),
+    controller = nothing,
+    alias_u0 = false,
+    verbose = true,
     kwargs...,
 )
     (; u0, p) = prob
@@ -87,10 +87,10 @@ function DiffEqBase.__init(
     saveat_internal = OrdinaryDiffEqCore.initialize_saveat(tType, saveat, prob.tspan)
     d_discontinuities_internal = OrdinaryDiffEqCore.initialize_d_discontinuities(tType, d_discontinuities, prob.tspan)
 
-    u = setup_u(prob, alg, alias_u0)
+    u     = setup_u(prob, alg, alias_u0)
     uprev = setup_u(prob, alg, false)
-    tmp = setup_u(prob, alg, false)
-    uType = typeof(u)
+    tmp   = setup_u(prob, alg, false)
+    uType                = typeof(u)
 
     sol = DiffEqBase.build_solution(prob, alg, tType[], uType[])
 
@@ -137,14 +137,14 @@ end
 DiffEqBase.has_reinit(integrator::OperatorSplittingIntegrator) = true
 function DiffEqBase.reinit!(
     integrator::OperatorSplittingIntegrator,
-    u0=integrator.sol.prob.u0;
-    t0=integrator.sol.prob.tspan[1],
-    tf=integrator.sol.prob.tspan[2],
-    erase_sol=false,
-    tstops=integrator._tstops,
-    saveat=integrator._saveat,
-    reinit_callbacks=true,
-    reinit_retcode=true
+    u0 = integrator.sol.prob.u0;
+    t0 = integrator.sol.prob.tspan[1],
+    tf = integrator.sol.prob.tspan[2],
+    erase_sol = false,
+    tstops = integrator._tstops,
+    saveat = integrator._saveat,
+    reinit_callbacks = true,
+    reinit_retcode = true
 )
     integrator.u .= u0
     integrator.uprev .= u0
@@ -268,17 +268,17 @@ function check_error_subintegrators(integrator, subintegrator::SciMLBase.DEInteg
     return SciMLBase.check_error(subintegrator)
 end
 
-function DiffEqBase.step!(integrator::OperatorSplittingIntegrator, dt, stop_at_tdt=false)
+function DiffEqBase.step!(integrator::OperatorSplittingIntegrator, dt, stop_at_tdt = false)
     @timeit_debug "step!" begin
-        # OridinaryDiffEq lets dt be negative if tdir is -1, but that's inconsistent
-        dt <= zero(dt) && error("dt must be positive")
-        stop_at_tdt && !integrator.dtchangeable && error("Cannot stop at t + dt if dtchangeable is false")
-        tnext = integrator.t + tdir(integrator) * dt
-        stop_at_tdt && DiffEqBase.add_tstop!(integrator, tnext)
-        while !reached_tstop(integrator, tnext, stop_at_tdt)
-            @timeit_debug "check_error" DiffEqBase.check_error!(integrator) ∉ (SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default) && return
-            __step!(integrator)
-        end
+    # OridinaryDiffEq lets dt be negative if tdir is -1, but that's inconsistent
+    dt <= zero(dt) && error("dt must be positive")
+    stop_at_tdt && !integrator.dtchangeable && error("Cannot stop at t + dt if dtchangeable is false")
+    tnext = integrator.t + tdir(integrator) * dt
+    stop_at_tdt && DiffEqBase.add_tstop!(integrator, tnext)
+    while !reached_tstop(integrator, tnext, stop_at_tdt)
+        @timeit_debug "check_error" DiffEqBase.check_error!(integrator) ∉ (SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default) && return
+        __step!(integrator)
+    end
     end
 end
 
@@ -300,8 +300,8 @@ end
 # end
 # Interpolation
 # TODO via https://github.com/SciML/SciMLBase.jl/blob/master/src/interpolation.jl
-function linear_interpolation!(y, t, y1, y2, t1, t2)
-    y .= y1 + (t - t1) * (y2 - y1) / (t2 - t1)
+function linear_interpolation!(y,t,y1,y2,t1,t2)
+    y .= y1 + (t-t1) * (y2-y1)/(t2-t1)
 end
 function (integrator::OperatorSplittingIntegrator)(tmp, t)
     linear_interpolation!(tmp, t, integrator.uprev, integrator.u, integrator.tprev, integrator.t)
@@ -341,7 +341,7 @@ end
 # that OrdinaryDiffEq.jl does
 tdir(integrator) = integrator.tstops.ordering isa DataStructures.FasterForward ? 1 : -1
 is_past_t(integrator, t) = tdir(integrator) * (t - integrator.t) ≤ zero(integrator.t)
-function reached_tstop(integrator, tstop, stop_at_tstop=integrator.dtchangeable)
+function reached_tstop(integrator, tstop, stop_at_tstop = integrator.dtchangeable)
     if stop_at_tstop
         integrator.t > tstop && error("Integrator missed stop at $tstop (current time=$(integrator.t)). Aborting.")
         return integrator.t == tstop # Check for exact hit
@@ -359,13 +359,13 @@ function SciMLBase.done(integrator::OperatorSplittingIntegrator)
     elseif isempty(integrator.tstops)
         DiffEqBase.postamble!(integrator)
         return true
-        # elseif integrator.just_hit_tstop
+    # elseif integrator.just_hit_tstop
         # integrator.just_hit_tstop = false
         # if integrator.opts.stop_at_next_tstop
         #     postamble!(integrator)
         #     return true
         # end
-        # else
+    # else
         # @error "What to do here?"
     end
     false
@@ -415,7 +415,7 @@ function advance_solution_to!(integrator::OperatorSplittingIntegrator, tnext)
 end
 
 function advance_solution_to!(outer_integrator::OperatorSplittingIntegrator, integrator::DiffEqBase.DEIntegrator, solution_indices, sync, cache, tend)
-    dt = tend - integrator.t
+    dt = tend-integrator.t
     SciMLBase.step!(integrator, dt, true)
 end
 
@@ -475,27 +475,27 @@ function build_subintegrator_tree_with_cache(
 )
     (; f, p) = prob
     subintegrator_tree_with_caches = ntuple(i ->
-            build_subintegrator_tree_with_cache(
-                prob,
-                alg.inner_algs[i],
-                get_operator(f, i),
-                p[i],
-                uprevouter, uouter,
-                f.solution_indices[i],
-                t0, dt, tf,
-                tstops, saveat, d_discontinuities, callback,
-                adaptive, verbose,
-            ),
+        build_subintegrator_tree_with_cache(
+            prob,
+            alg.inner_algs[i],
+            get_operator(f, i),
+            p[i],
+            uprevouter, uouter,
+            f.solution_indices[i],
+            t0, dt, tf,
+            tstops, saveat, d_discontinuities, callback,
+            adaptive, verbose,
+        ),
         length(f.functions)
     )
 
     subintegrator_tree = ntuple(i -> subintegrator_tree_with_caches[i][1], length(f.functions))
-    caches = ntuple(i -> subintegrator_tree_with_caches[i][2], length(f.functions))
+    caches         = ntuple(i -> subintegrator_tree_with_caches[i][2], length(f.functions))
 
     # TODO fix mixed device type problems we have to be smarter
     return subintegrator_tree, init_cache(f, alg;
         uprev=uprevouter, u=uouter, alias_u=true,
-        inner_caches=caches,
+        inner_caches = caches,
     )
 end
 
@@ -511,29 +511,29 @@ function build_subintegrator_tree_with_cache(
     controller=nothing,
 )
     subintegrator_tree_with_caches = ntuple(i ->
-            build_subintegrator_tree_with_cache(
-                prob,
-                alg.inner_algs[i],
-                get_operator(f, i),
-                p[i],
-                uprevouter, uouter,
-                f.solution_indices[i],
-                t0, dt, tf,
-                tstops, saveat, d_discontinuities, callback,
-                adaptive, verbose,
-            ),
+        build_subintegrator_tree_with_cache(
+            prob,
+            alg.inner_algs[i],
+            get_operator(f, i),
+            p[i],
+            uprevouter, uouter,
+            f.solution_indices[i],
+            t0, dt, tf,
+            tstops, saveat, d_discontinuities, callback,
+            adaptive, verbose,
+        ),
         length(f.functions)
     )
 
     subintegrator_tree = first.(subintegrator_tree_with_caches)
-    inner_caches = last.(subintegrator_tree_with_caches)
+    inner_caches   = last.(subintegrator_tree_with_caches)
 
     # TODO fix mixed device type problems we have to be smarter
     uprev = @view uprevouter[solution_indices]
-    u = @view uouter[solution_indices]
+    u     = @view uouter[solution_indices]
     return subintegrator_tree, init_cache(f, alg;
-        uprev=uprev, u=u,
-        inner_caches=inner_caches,
+        uprev = uprev, u = u,
+        inner_caches = inner_caches,
     )
 end
 
@@ -547,18 +547,18 @@ function build_subintegrator_tree_with_cache(
     adaptive, verbose,
     save_end=false,
     controller=nothing,
-) where {S,T,P,F}
+) where {S, T, P, F}
     uprev = @view uprevouter[solution_indices]
     u = @view uouter[solution_indices]
 
     integrator = DiffEqBase.__init(
-        SciMLBase.ODEProblem(f, u, (t0, min(t0 + dt, tf)), p),
+        SciMLBase.ODEProblem(f, u, (t0, min(t0+dt,tf)), p),
         alg;
         dt,
-        saveat=(),
+        saveat = (),
         d_discontinuities,
-        save_everystep=false,
-        advance_to_tstop=false,
+        save_everystep = false,
+        advance_to_tstop = false,
         adaptive,
         controller,
         verbose
