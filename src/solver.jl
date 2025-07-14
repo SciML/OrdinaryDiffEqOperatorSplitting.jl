@@ -41,6 +41,6 @@ end
             if !(subinteg isa Tuple) && subinteg.sol.retcode ∉ (SciMLBase.ReturnCode.Default, SciMLBase.ReturnCode.Success)
                 return
             end
-            backward_sync_subintegrator!(outer_integrator, subinteg, idxs)
+            backward_sync_subintegrator!(outer_integrator, subinteg, idxs, synchronizer)
     end
 end 
