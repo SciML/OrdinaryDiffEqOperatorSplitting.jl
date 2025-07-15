@@ -50,7 +50,8 @@ end
 """
      forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
 
-This function is responsible to copy the solution and parameters of the outer integrator with the information given into the inner integrator.
+This function is responsible of copying the solution and parameters of the outer integrator and the synchronized subintegrators with the information given into the inner integrator.
+If the inner integrator is synchronized with other inner integrators using `sync`, the function `forward_sync_external!` shall be dispatched for `sync`. 
 The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
 The `solution_indices` are global indices in the outer integrators solution vectors.
 """
@@ -60,14 +61,16 @@ function forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrat
 end
 
 """
-     forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
+    backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
 
-This function is responsible to copy the solution of the inner integrator back into outer integrator.
+This function is responsible of copying the solution of the inner integrator back into outer integrator and the synchronized subintegrators.
+If the inner integrator is synchronized with other inner integrators using `sync`, the function `backward_sync_external!` shall be dispatched for `sync`. 
 The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
 The `solution_indices` are global indices in the outer integrators solution vectors.
 """
-function backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, sync)
-    backward_sync_internal!(outer_integrator, inner_integrator, sync)
+function backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
+    backward_sync_internal!(outer_integrator, inner_integrator, solution_indices)
+    backward_sync_external!(outer_integrator, inner_integrator, sync)
 end
 
 # This is a bit tricky, because per default the operator splitting integrators share their solution vector. However, there is also the case
@@ -90,6 +93,11 @@ end
 # This is a noop, because operator splitting integrators do not have parameters
 forward_sync_external!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::OperatorSplittingIntegrator, sync::NoExternalSynchronization) = nothing
 function forward_sync_external!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, sync)
+    synchronize_solution_with_parameters!(outer_integrator, inner_integrator.p, sync)
+end
+
+backward_sync_external!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::OperatorSplittingIntegrator, sync::NoExternalSynchronization) = nothing
+function backward_sync_external!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, sync)
     synchronize_solution_with_parameters!(outer_integrator, inner_integrator.p, sync)
 end
 

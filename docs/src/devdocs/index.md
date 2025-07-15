@@ -77,7 +77,7 @@ end
     if subintegrators[1].sol.retcode ∉ (SciMLBase.ReturnCode.Default, SciMLBase.ReturnCode.Success)
         return
     end
-    OrdinaryDiffEqOperatorSplitting.backward_sync_subintegrator!(outer_integrator, subintegrators[1], solution_indices[1])
+    OrdinaryDiffEqOperatorSplitting.backward_sync_subintegrator!(outer_integrator, subintegrators[1], solution_indices[1], synchronizers[1])
 
     # Advance second subproblem
     OrdinaryDiffEqOperatorSplitting.forward_sync_subintegrator!(outer_integrator, subintegrators[2], solution_indices[2], synchronizers[2])
@@ -85,7 +85,7 @@ end
     if subintegrators[2].sol.retcode ∉ (SciMLBase.ReturnCode.Default, SciMLBase.ReturnCode.Success)
         return
     end
-    OrdinaryDiffEqOperatorSplitting.backward_sync_subintegrator!(outer_integrator, subintegrators[2], solution_indices[2])
+    OrdinaryDiffEqOperatorSplitting.backward_sync_subintegrator!(outer_integrator, subintegrators[2], solution_indices[2], synchronizers[2])
 
     # Done :)
 end 

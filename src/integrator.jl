@@ -568,4 +568,4 @@ function build_subintegrator_tree_with_cache(
 end
 
 forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, subintegrator_tree::Tuple, solution_indices::Tuple, synchronizers::Tuple) = nothing
-backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, subintegrator_tree::Tuple, solution_indices::Tuple) = nothing
+backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, subintegrator_tree::Tuple, solution_indices::Tuple, synchronizer::Tuple) = nothing

@@ -5,7 +5,7 @@ using Test
 import UnPack: @unpack
 
 import SciMLBase: SciMLBase, ReturnCode
-import DiffEqBase: DiffEqBase, ODEFunction, ODEProblem
+import DiffEqBase: DiffEqBase, ODEFunction, ODEProblem, DEIntegrator
 using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqTsit5
 
@@ -160,5 +160,49 @@ using OrdinaryDiffEqTsit5
                 end
             end
         end
+    end
+
+    @testset "sync API" begin
+        dt = 0.01π
+
+        f1dofs = [1,2,3]
+        f2dofs = [1,3]
+        struct FakeRateMultiplierSynchronizer
+            α::Float64
+        end
+        mutable struct TestingODE1
+            α::Float64
+        end
+        mutable struct TestingODE2
+            α::Float64
+        end
+        function (ode::TestingODE1)(du, u, p, t)
+            @. du = -ode.α *u
+        end    
+        function (ode::TestingODE2)(du, u, p, t)
+            du[1] = -ode.α * u[2]
+            du[2] = -ode.α *u[1]
+        end
+        f1 = ODEFunction(TestingODE1(0.1))
+        f2 = ODEFunction(TestingODE2(0.01))
+        α = 2.0
+        function OS.backward_sync_external!(outer_integrator::OS.OperatorSplittingIntegrator, inner_integrator::DEIntegrator, sync::FakeRateMultiplierSynchronizer)
+            inner_integrator.f.f.α /= sync.α
+        end
+        function OS.forward_sync_external!(outer_integrator::OS.OperatorSplittingIntegrator, inner_integrator::DEIntegrator, sync::FakeRateMultiplierSynchronizer)
+            inner_integrator.f.f.α *= sync.α
+        end
+        fsplit = GenericSplitFunction((f1,f2), (f1dofs, f2dofs), (FakeRateMultiplierSynchronizer(α), FakeRateMultiplierSynchronizer(α)))
+
+        trueu_sync = exp((tspan[2]-tspan[1])*(trueA+trueB)*α)*u0
+
+        prob = OperatorSplittingProblem(fsplit, u0, tspan)
+        tstepper = LieTrotterGodunov((Euler(), Euler()))
+        integrator = DiffEqBase.init(prob, tstepper, dt=dt, verbose=true, alias_u0=false)
+        DiffEqBase.solve!(integrator)
+        ufinal = copy(integrator.u)
+        @test isapprox(ufinal, trueu_sync, atol=1e-9)
+        @test f1.f.α == 0.1
+        @test f2.f.α == 0.01
     end
 end
