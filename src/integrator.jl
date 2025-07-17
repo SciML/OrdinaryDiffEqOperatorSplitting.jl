@@ -61,7 +61,7 @@ function DiffEqBase.__init(
     advance_to_tstop = false,
     adaptive = DiffEqBase.isadaptive(alg),
     controller = nothing,
-    alias_u0 = true,
+    alias_u0 = false,
     verbose = true,
     kwargs...,
 )
