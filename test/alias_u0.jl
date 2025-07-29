@@ -26,8 +26,8 @@ alg = LieTrotterGodunov((Euler(), Euler()))
 
 @testset "alias_u0=true in init function" begin
     u0 = [-1.0, 1.0, 0.0]
-    prob = OperatorSplittingProblem(f, u0, tspan, alias_u0=true)
-    integrator = init(prob, alg; dt=dt)
+    prob = OperatorSplittingProblem(f, u0, tspan, alias_u0 = true)
+    integrator = init(prob, alg; dt = dt)
 
     # When alias_u0=true, integrator.u should be the same object as u0
     @test integrator.u === u0
@@ -40,8 +40,8 @@ end
 
 @testset "alias_u0=false in init function" begin
     u0 = [-1.0, 1.0, 0.0]
-    prob = OperatorSplittingProblem(f, u0, tspan, alias_u0=false)
-    integrator = init(prob, alg; dt=dt)
+    prob = OperatorSplittingProblem(f, u0, tspan, alias_u0 = false)
+    integrator = init(prob, alg; dt = dt)
 
     # When alias_u0=false, integrator.u should be a copy, not the same object
     @test integrator.u !== u0
@@ -58,7 +58,7 @@ end
     # Test default behavior when alias_u0 is not specified
     u0 = [-1.0, 1.0, 0.0]
     prob = OperatorSplittingProblem(f, u0, tspan)
-    integrator = init(prob, alg; dt=dt)
+    integrator = init(prob, alg; dt = dt)
 
     # Default behavior should be alias_u0=false (based on init function signature)
     @test integrator.u !== u0
@@ -77,12 +77,12 @@ end
     prob = OperatorSplittingProblem(f, u0, tspan)
 
     # Test alias_u0=true in init
-    integrator_alias = init(prob, alg; dt=dt, alias_u0=true)
+    integrator_alias = init(prob, alg; dt = dt, alias_u0 = true)
     @test integrator_alias.u === u0
 
     # Reset u0 and test alias_u0=false
     u0[:] = [-1.0, 1.0, 0.0]
-    integrator_copy = init(prob, alg; dt=dt, alias_u0=false)
+    integrator_copy = init(prob, alg; dt = dt, alias_u0 = false)
     @test integrator_copy.u !== u0
     @test integrator_copy.u == u0
 end
