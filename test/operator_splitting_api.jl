@@ -8,21 +8,15 @@ using OrdinaryDiffEqTsit5
 
 # Reference
 tspan = (0.0, 100.0)
-u0 = [
-    0.7611944793397108
-    0.9059606424982555
-    0.5755174199139956
-]
-trueA = [
-    -0.1 0.0 -0.0;
-    0.0 -0.1 0.0;
-    -0.0 0.0 -0.1
-]
-trueB = [
-    -0.0 0.0 -0.01;
-    0.0 -0.0 0.0;
-    -0.01 0.0 -0.0
-]
+u0 = [0.7611944793397108
+      0.9059606424982555
+      0.5755174199139956]
+trueA = [-0.1 0.0 -0.0;
+         0.0 -0.1 0.0;
+         -0.0 0.0 -0.1]
+trueB = [-0.0 0.0 -0.01;
+         0.0 -0.0 0.0;
+         -0.01 0.0 -0.0]
 function ode_true(du, u, p, t)
     du .= -0.1u
     du[1] -= 0.01u[3]
@@ -85,15 +79,16 @@ f2 = ODEFunction(ode2)
             (prob2, TimeStepperType((Euler(), TimeStepperType((Euler(), Tsit5()))))),
             (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Euler()))))),
             (prob2, TimeStepperType((Tsit5(), TimeStepperType((Euler(), Tsit5()))))),
-            (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Tsit5()))))),
+            (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Tsit5())))))
         )
             # The remaining code works as usual.
-            integrator = DiffEqBase.init(prob, tstepper, dt=dt, verbose=true, alias_u0=false)
+            integrator = DiffEqBase.init(
+                prob, tstepper, dt = dt, verbose = true, alias_u0 = false)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
             ufinal = copy(integrator.u)
-            @test isapprox(ufinal, trueu, atol=1e-2)
+            @test isapprox(ufinal, trueu, atol = 1e-2)
             @test integrator.t ≈ tspan[2]
             @test integrator._dt ≈ dt
             # @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
@@ -102,7 +97,7 @@ f2 = ODEFunction(ode2)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
             end
-            @test isapprox(ufinal, integrator.u, atol=1e-12)
+            @test isapprox(ufinal, integrator.u, atol = 1e-12)
             @test integrator.t ≈ tspan[2]
             @test integrator._dt ≈ dt
             # @test integrator.iter == ...
@@ -111,7 +106,7 @@ f2 = ODEFunction(ode2)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
             end
-            @test isapprox(ufinal, integrator.u, atol=1e-12)
+            @test isapprox(ufinal, integrator.u, atol = 1e-12)
             @test integrator.t ≈ tspan[2]
             @test integrator._dt ≈ dt
             # @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
@@ -142,18 +137,19 @@ f2 = ODEFunction(ode2)
         fsplit_NaN = GenericSplitFunction((f1, f_NaN), (f1dofs, f_NaN_dofs))
         prob_NaN = OperatorSplittingProblem(fsplit_NaN, u0, tspan)
 
-
         for TimeStepperType in (LieTrotterGodunov,)
             @testset "Solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
                 (prob1, TimeStepperType((Euler(), Euler()))),
                 (prob1, TimeStepperType((Tsit5(), Euler()))),
                 (prob1, TimeStepperType((Euler(), Tsit5()))),
-                (prob1, TimeStepperType((Tsit5(), Tsit5()))),
+                (prob1, TimeStepperType((Tsit5(), Tsit5())))
             )
-                integrator_NaN = DiffEqBase.init(prob_NaN, tstepper, dt=dt, verbose=true, alias_u0=false)
+                integrator_NaN = DiffEqBase.init(
+                    prob_NaN, tstepper, dt = dt, verbose = true, alias_u0 = false)
                 @test integrator_NaN.sol.retcode == DiffEqBase.ReturnCode.Default
                 DiffEqBase.solve!(integrator_NaN)
-                @test integrator_NaN.sol.retcode ∈ (DiffEqBase.ReturnCode.Unstable, DiffEqBase.ReturnCode.DtNaN)
+                @test integrator_NaN.sol.retcode ∈
+                      (DiffEqBase.ReturnCode.Unstable, DiffEqBase.ReturnCode.DtNaN)
             end
         end
     end
