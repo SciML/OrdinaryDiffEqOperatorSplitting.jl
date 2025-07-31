@@ -1,4 +1,3 @@
-
 ## [Operator Splitting Theory](@id theory_operator-splitting)
 
 For operator splitting procedures we assume that we have some time-dependent
@@ -27,8 +26,8 @@ Arguably the easiest algorithm to advance the solution from $t_0$ to some time
 point $t_1 > t_0$ is the Lie-Trotter-Godunov operator splitting [Lie:1880:tti,Tro:1959:psg,God:1959:dmn](@cite).
 Here the subproblems are solved consecutively, where the solution of one
 subproblem is taken as the initial guess for the next subproblem, until we have
- solved all subproblems. In this case we have constructed an _approximation_
- for $u(t_1)$.
+solved all subproblems. In this case we have constructed an _approximation_
+for $u(t_1)$.
 
 More formally we can write the Lie-Trotter-Godunov scheme [Lie:1880:tti,Tro:1959:psg,God:1959:dmn](@cite) as follows:
 
@@ -40,6 +39,7 @@ More formally we can write the Lie-Trotter-Godunov scheme [Lie:1880:tti,Tro:1959
     \text{Solve} \quad d_t u^N(t) &= F_N(u^N(t), p, t) & & \quad \text{on} \; [t_0, t_1] \; \text{with} \; u^N(t_0) = u^{N-1}(t_1)
 \end{aligned}
 ```
+
 Such that we obtain the approximation $u(t_1) \approx u^{N-1}(t_1)$. The
 approximation is first order in time, as we will show in the next section.
 

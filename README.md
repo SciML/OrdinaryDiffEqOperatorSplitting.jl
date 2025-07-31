@@ -31,7 +31,7 @@ for each subproblem with the `LieTrotterGodunov` algorithm, by defining a proble
 using OrdinaryDiffEqLowOrderRK, OrdinaryDiffEqOperatorSplitting
 # This is the true, full ODE.
 function ode_true(du, u, p, t)
-    du   .-= 0.1u
+    du .-= 0.1u
     du[1] -= 0.01u[3]
     du[3] -= 0.01u[1]
 end
@@ -41,7 +41,7 @@ function ode1(du, u, p, t)
     @. du = -0.1u
 end
 f1 = ODEFunction(ode1)
-f1dofs = [1,2,3]
+f1dofs = [1, 2, 3]
 
 # This is the second operator of the ODE.
 function ode2(du, u, p, t)
@@ -49,7 +49,7 @@ function ode2(du, u, p, t)
     du[2] = -0.01u[1]
 end
 f2 = ODEFunction(ode2)
-f2dofs = [1,3]
+f2dofs = [1, 3]
 
 # This defines the split of the ODE.
 f = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
@@ -66,7 +66,7 @@ alg = LieTrotterGodunov(
 
 # Right now OrdinaryDiffEqOperatorSplitting.jl does not implement the SciML solution interface,
 # but we can only intermediate solutions via the iterator interface.
-integrator = init(prob, alg, dt=0.1)
+integrator = init(prob, alg, dt = 0.1)
 for (u, t) in TimeChoiceIterator(integrator, 0.0:0.5:1.0)
     @show t, u
 end
