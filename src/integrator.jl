@@ -632,28 +632,27 @@ end
 function __step!(integrator)
     # (; dtchangeable, tstops, dtcache) = integrator
 
-    # update dt before incrementing u; if dt is changeable and there is
-    # a tstop within dt, reduce dt to tstop - t
-    integrator.dt =
-        !isempty(tstops) && dtchangeable ? tdir(integrator) * min(_dt, abs(first(tstops) - integrator.t)) :
-        tdir(integrator) * _dt
+    # # update dt before incrementing u; if dt is changeable and there is
+    # # a tstop within dt, reduce dt to tstop - t
+    # integrator.dt =
+    #     !isempty(tstops) && dtchangeable ? tdir(integrator) * min(dtcache, abs(first(tstops) - integrator.t)) :
+    #     tdir(integrator) * dtcache
 
     # # Propagate information down into the subintegrator_tree
     # synchronize_subintegrator_tree!(integrator)
     tnext = integrator.t + integrator.dt
-
     # # Solve inner problems
     advance_solution_to!(integrator, tnext)
     stepsize_controller!(integrator)
 
-    # Update integrator
-    # increment t by dt, rounding to the first tstop if that is roughly
-    # equivalent up to machine precision; the specific bound of 100 * eps...
-    # is taken from OrdinaryDiffEq.jl
-    t_unit = oneunit(integrator.t)
-    max_t_error = 100 * eps(float(integrator.t / t_unit)) * t_unit
-    integrator.tprev = integrator.t
-    integrator.t = !isempty(tstops) && abs(first(tstops) - tnext) < max_t_error ? first(tstops) : tnext
+    # # Update integrator
+    # # increment t by dt, rounding to the first tstop if that is roughly
+    # # equivalent up to machine precision; the specific bound of 100 * eps...
+    # # is taken from OrdinaryDiffEq.jl
+    # t_unit = oneunit(integrator.t)
+    # max_t_error = 100 * eps(float(integrator.t / t_unit)) * t_unit
+    # integrator.tprev = integrator.t
+    # integrator.t = !isempty(tstops) && abs(first(tstops) - tnext) < max_t_error ? first(tstops) : tnext
 
     # step_accept_controller!(integrator)
 
