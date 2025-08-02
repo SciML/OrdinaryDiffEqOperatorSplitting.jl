@@ -90,7 +90,7 @@ f2 = ODEFunction(ode2)
             ufinal = copy(integrator.u)
             @test isapprox(ufinal, trueu, atol = 1e-2)
             @test integrator.t ≈ tspan[2]
-            @test integrator._dt ≈ dt
+            @test integrator.dtcache ≈ dt
             # @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
 
             DiffEqBase.reinit!(integrator)
@@ -99,7 +99,7 @@ f2 = ODEFunction(ode2)
             end
             @test isapprox(ufinal, integrator.u, atol = 1e-12)
             @test integrator.t ≈ tspan[2]
-            @test integrator._dt ≈ dt
+            @test integrator.dtcache ≈ dt
             # @test integrator.iter == ...
 
             DiffEqBase.reinit!(integrator)
@@ -108,16 +108,16 @@ f2 = ODEFunction(ode2)
             end
             @test isapprox(ufinal, integrator.u, atol = 1e-12)
             @test integrator.t ≈ tspan[2]
-            @test integrator._dt ≈ dt
-            # @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
+            @test integrator.dtcache ≈ dt
+            @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
 
             DiffEqBase.reinit!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
             @test integrator.t ≈ tspan[2]
-            @test integrator._dt ≈ dt
-            # @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
+            @test integrator.dtcache ≈ dt
+            @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
         end
     end
 

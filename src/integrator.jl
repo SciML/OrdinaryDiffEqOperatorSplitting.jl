@@ -1,3 +1,20 @@
+mutable struct IntegratorStats
+    naccept::Int64
+    nreject::Int64
+    # TODO inner solver stats
+end
+
+IntegratorStats() = IntegratorStats(0, 0)
+
+Base.@kwdef mutable struct IntegratorOptions{tType, fType, F3}
+    adaptive::Bool
+    dtmin::tType = eps(Float64)
+    dtmax::tType = Inf
+    failfactor::fType = 4.0
+    verbose::Bool = false
+    isoutofdomain::F3 = DiffEqBase.ODE_DEFAULT_ISOUTOFDOMAIN
+end
+
 """
     OperatorSplittingIntegrator <: AbstractODEIntegrator
 
@@ -19,7 +36,9 @@ mutable struct OperatorSplittingIntegrator{
     solType,
     subintTreeType,
     solidxTreeType,
-    syncTreeType
+    syncTreeType,
+    controllerType,
+    optionsType
 } <: DiffEqBase.AbstractODEIntegrator{algType, true, uType, tType}
     const f::fType
     const alg::algType
@@ -30,21 +49,30 @@ mutable struct OperatorSplittingIntegrator{
     t::tType # Current time
     tprev::tType
     dt::tType # This is the time step length which which we use during time marching
-    _dt::tType # This is the proposed time step length
-    const dtchangeable::Bool # Indicator whether _dt can be changed
+    dtcache::tType # This is the proposed time step length
+    const dtchangeable::Bool # Indicator whether dtcache can be changed
     tstops::heapType
     _tstops::tstopsType # argument to __init used as default argument to reinit!
     saveat::heapType
     _saveat::saveatType # argument to __init used as default argument to reinit!
     callback::callbackType
     advance_to_tstop::Bool
-    u_modified::Bool # not used; field is required for compatibility with
+    # TODO group these into some internal flag struct
+    last_step_failed::Bool
+    force_stepfail::Bool
+    isout::Bool
+    u_modified::Bool
     # DiffEqBase.initialize! and DiffEqBase.finalize!
     cache::cacheType
     sol::solType
     subintegrator_tree::subintTreeType
     solution_index_tree::solidxTreeType
     synchronizer_tree::syncTreeType
+    iter::Int
+    controller::controllerType
+    opts::optionsType
+    stats::IntegratorStats
+    tdir::tType
 end
 
 # called by DiffEqBase.init and DiffEqBase.solve
@@ -69,7 +97,7 @@ function DiffEqBase.__init(
     t0, tf = prob.tspan
 
     dt > zero(dt) || error("dt must be positive")
-    _dt = dt
+    dtcache = dt
     dt = tf > t0 ? dt : -dt
     tType = typeof(dt)
 
@@ -83,7 +111,8 @@ function DiffEqBase.__init(
     end
 
     # Setup tstop logic
-    tstops_internal = OrdinaryDiffEqCore.initialize_tstops(tType, tstops, d_discontinuities, prob.tspan)
+    tstops_internal = OrdinaryDiffEqCore.initialize_tstops(
+        tType, tstops, d_discontinuities, prob.tspan)
     saveat_internal = OrdinaryDiffEqCore.initialize_saveat(tType, saveat, prob.tspan)
     d_discontinuities_internal = OrdinaryDiffEqCore.initialize_d_discontinuities(
         tType, d_discontinuities, prob.tspan)
@@ -117,7 +146,7 @@ function DiffEqBase.__init(
         t0,
         copy(t0),
         dt,
-        _dt,
+        dtcache,
         dtchangeable,
         tstops_internal,
         tstops,
@@ -126,11 +155,19 @@ function DiffEqBase.__init(
         callback,
         advance_to_tstop,
         false,
+        false,
+        false,
+        false,
         cache,
         sol,
         subintegrator_tree,
         build_solution_index_tree(prob.f),
-        build_synchronizer_tree(prob.f)
+        build_synchronizer_tree(prob.f),
+        0,
+        controller,
+        IntegratorOptions(; verbose, adaptive),
+        IntegratorStats(),
+        tType(tstops_internal.ordering isa DataStructures.FasterForward ? 1 : -1)
     )
     DiffEqBase.initialize!(callback, u0, t0, integrator) # Do I need this?
     return integrator
@@ -153,6 +190,7 @@ function DiffEqBase.reinit!(
     integrator.t = t0
     integrator.tprev = t0
     integrator.tstops, integrator.saveat = tstops_and_saveat_heaps(t0, tf, tstops, saveat)
+    integrator.iter = 0
     if erase_sol
         resize!(integrator.sol.t, 0)
         resize!(integrator.sol.u, 0)
@@ -164,7 +202,8 @@ function DiffEqBase.reinit!(
         DiffEqBase.initialize!(saving_callback, u0, t0, integrator)
     end
     if reinit_retcode
-        integrator.sol = DiffEqBase.solution_new_retcode(integrator.sol, SciMLBase.ReturnCode.Default)
+        integrator.sol = DiffEqBase.solution_new_retcode(
+            integrator.sol, SciMLBase.ReturnCode.Default)
     end
 
     subreinit!(
@@ -205,6 +244,142 @@ end
     end
 end
 
+function OrdinaryDiffEqCore.handle_tstop!(integrator::OperatorSplittingIntegrator)
+    if SciMLBase.has_tstop(integrator)
+        tdir_t = tdir(integrator) * integrator.t
+        tdir_tstop = SciMLBase.first_tstop(integrator)
+        if tdir_t == tdir_tstop
+            while tdir_t == tdir_tstop #remove all redundant copies
+                res = SciMLBase.pop_tstop!(integrator)
+                SciMLBase.has_tstop(integrator) ?
+                (tdir_tstop = SciMLBase.first_tstop(integrator)) : break
+            end
+            notify_integrator_hit_tstop!(integrator)
+        elseif tdir_t > tdir_tstop
+            if !integrator.dtchangeable
+                SciMLBase.change_t_via_interpolation!(integrator,
+                    tdir(integrator) *
+                    SciMLBase.pop_tstop!(integrator), Val{true})
+                notify_integrator_hit_tstop!(integrator)
+            else
+                error("Something went wrong. Integrator stepped past tstops but the algorithm was dtchangeable. Please report this error.")
+            end
+        end
+    end
+    return nothing
+end
+
+notify_integrator_hit_tstop!(integrator::OperatorSplittingIntegrator) = nothing
+
+is_first_iteration(integrator::OperatorSplittingIntegrator) = integrator.iter == 0
+increment_iteration(integrator::OperatorSplittingIntegrator) = integrator.iter += 1
+
+# Controller interface
+function reject_step!(integrator::OperatorSplittingIntegrator)
+    OrdinaryDiffEqCore.increment_reject!(integrator.stats)
+    reject_step!(integrator, integrator.cache, integrator.controller)
+end
+function reject_step!(integrator::OperatorSplittingIntegrator, cache, controller)
+    integrator.u .= integrator.uprev
+    # TODO what do we need to do with the subintegrators?
+end
+function reject_step!(integrator::OperatorSplittingIntegrator, cache, ::Nothing)
+    if length(integrator.uprev) == 0
+        error("Cannot roll back integrator. Aborting time integration step at $(integrator.t).")
+    end
+end
+
+# Solution looping interface
+function should_accept_step(integrator::OperatorSplittingIntegrator)
+    if integrator.force_stepfail || integrator.isout
+        return false
+    end
+    return should_accept_step(integrator, integrator.cache, integrator.controller)
+end
+function should_accept_step(integrator::OperatorSplittingIntegrator, cache, ::Nothing)
+    return !(integrator.force_stepfail)
+end
+function accept_step!(integrator::OperatorSplittingIntegrator)
+    OrdinaryDiffEqCore.increment_accept!(integrator.stats)
+    accept_step!(integrator, integrator.cache, integrator.controller)
+end
+function accept_step!(integrator::OperatorSplittingIntegrator, cache, controller)
+    store_previous_info!(integrator)
+end
+function store_previous_info!(integrator::OperatorSplittingIntegrator)
+    if length(integrator.uprev) > 0 # Integrator can rollback
+        update_uprev!(integrator)
+    end
+end
+
+function update_uprev!(integrator::OperatorSplittingIntegrator)
+    SciMLBase.recursivecopy!(integrator.uprev, integrator.u)
+    nothing
+end
+
+function step_header!(integrator::OperatorSplittingIntegrator)
+    # Accept or reject the step
+    if !is_first_iteration(integrator)
+        if should_accept_step(integrator)
+            accept_step!(integrator)
+        else # Step should be rejected and hence repeated
+            reject_step!(integrator)
+        end
+    elseif integrator.u_modified # && integrator.iter == 0
+        update_uprev!(integrator)
+    end
+
+    # Before stepping we might need to adjust the dt
+    increment_iteration(integrator)
+    # OrdinaryDiffEqCore.choose_algorithm!(integrator, integrator.cache)
+    OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator)
+    OrdinaryDiffEqCore.modify_dt_for_tstops!(integrator)
+    integrator.force_stepfail = false
+end
+
+function footer_reset_flags!(integrator)
+    integrator.u_modified = false
+end
+function setup_validity_flags!(integrator, t_next)
+    integrator.isout = false #integrator.opts.isoutofdomain(integrator.u, integrator.p, t_next)
+end
+function fix_solution_buffer_sizes!(integrator, sol)
+    resize!(integrator.sol.t, integrator.saveiter)
+    resize!(integrator.sol.u, integrator.saveiter)
+    if !(integrator.sol isa SciMLBase.DAESolution)
+        resize!(integrator.sol.k, integrator.saveiter_dense)
+    end
+end
+
+function step_footer!(integrator::OperatorSplittingIntegrator)
+    ttmp = integrator.t + tdir(integrator) * integrator.dt
+
+    footer_reset_flags!(integrator)
+    setup_validity_flags!(integrator, ttmp)
+
+    if should_accept_step(integrator)
+        integrator.last_step_failed = false
+        integrator.tprev = integrator.t
+        integrator.t = ttmp#OrdinaryDiffEqCore.fixed_t_for_floatingpoint_error!(integrator, ttmp)
+        # OrdinaryDiffEqCore.handle_callbacks!(integrator)
+        step_accept_controller!(integrator) # Noop for non-adaptive algorithms
+    elseif integrator.force_stepfail
+        if SciMLBase.isadaptive(integrator)
+            step_reject_controller!(integrator)
+            OrdinaryDiffEqCore.post_newton_controller!(integrator, integrator.alg)
+        elseif integrator.dtchangeable # Non-adaptive but can change dt
+            integrator.dt /= integrator.opts.failfactor
+        elseif integrator.last_step_failed
+            return
+        end
+        integrator.last_step_failed = true
+    end
+
+    # integration_monitor_step(integrator)
+
+    return nothing
+end
+
 # called by DiffEqBase.solve
 function DiffEqBase.__solve(prob::OperatorSplittingProblem,
         alg::AbstractOperatorSplittingAlgorithm, args...; kwargs...)
@@ -215,32 +390,54 @@ end
 # either called directly (after init), or by DiffEqBase.solve (via __solve)
 function DiffEqBase.solve!(integrator::OperatorSplittingIntegrator)
     while !isempty(integrator.tstops)
-        @timeit_debug "check_error" DiffEqBase.check_error!(integrator) ∉ (
-            SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default) && return
-        __step!(integrator)
+        while tdir(integrator) * integrator.t < SciMLBase.first_tstop(integrator)
+            step_header!(integrator)
+            @timeit_debug "check_error" DiffEqBase.check_error!(integrator) ∉ (
+                SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default)&&return
+            __step!(integrator)
+            step_footer!(integrator)
+            if !SciMLBase.has_tstop(integrator)
+                break
+            end
+        end
+        OrdinaryDiffEqCore.handle_tstop!(integrator)
     end
-    DiffEqBase.finalize!(integrator.callback, integrator.u, integrator.t, integrator)
-    if DiffEqBase.NAN_CHECK(integrator.u)
-        integrator.sol = DiffEqBase.solution_new_retcode(integrator.sol, SciMLBase.ReturnCode.Unstable)
-    else
-        integrator.sol = DiffEqBase.solution_new_retcode(integrator.sol, SciMLBase.ReturnCode.Success)
+    OrdinaryDiffEqCore.postamble!(integrator)
+    if integrator.sol.retcode != SciMLBase.ReturnCode.Default
+        return integrator.sol
     end
-    return integrator.sol
+    return integrator.sol = SciMLBase.solution_new_retcode(
+        integrator.sol, SciMLBase.ReturnCode.Success)
 end
 
 function DiffEqBase.step!(integrator::OperatorSplittingIntegrator)
     @timeit_debug "step!" if integrator.advance_to_tstop
-        tstop = first(integrator.tstops)
+        tstop = first_tstop(integrator)
         while !reached_tstop(integrator, tstop)
+            step_header!(integrator)
             @timeit_debug "check_error" DiffEqBase.check_error!(integrator) ∉ (
-                SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default) && return
+                SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default)&&return
             __step!(integrator)
+            step_footer!(integrator)
+            if !SciMLBase.has_tstop(integrator)
+                break
+            end
         end
     else
+        step_header!(integrator)
         @timeit_debug "check_error" DiffEqBase.check_error!(integrator) ∉ (
-            SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default) && return
+            SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default)&&return
         __step!(integrator)
+        step_footer!(integrator)
+        while !should_accept_step(integrator)
+            step_header!(integrator)
+            @timeit_debug "check_error" DiffEqBase.check_error!(integrator) ∉ (
+                SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default)&&return
+            __step!(integrator)
+            step_footer!(integrator)
+        end
     end
+    OrdinaryDiffEqCore.handle_tstop!(integrator)
 end
 
 function SciMLBase.check_error(integrator::OperatorSplittingIntegrator)
@@ -251,7 +448,7 @@ function SciMLBase.check_error(integrator::OperatorSplittingIntegrator)
 
     verbose = true # integrator.opts.verbose
 
-    if DiffEqBase.NAN_CHECK(integrator._dt) || DiffEqBase.NAN_CHECK(integrator.dt) # replace with https://github.com/SciML/OrdinaryDiffEq.jl/blob/373a8eec8024ef1acc6c5f0c87f479aa0cf128c3/lib/OrdinaryDiffEqCore/src/iterator_interface.jl#L5-L6 after moving to sciml integrators
+    if DiffEqBase.NAN_CHECK(integrator.dtcache) || DiffEqBase.NAN_CHECK(integrator.dt) # replace with https://github.com/SciML/OrdinaryDiffEq.jl/blob/373a8eec8024ef1acc6c5f0c87f479aa0cf128c3/lib/OrdinaryDiffEqCore/src/iterator_interface.jl#L5-L6 after moving to sciml integrators
         if verbose
             @warn("NaN dt detected. Likely a NaN value in the state, parameters, or derivative value caused this outcome.")
         end
@@ -284,9 +481,11 @@ function DiffEqBase.step!(integrator::OperatorSplittingIntegrator, dt, stop_at_t
         tnext = integrator.t + tdir(integrator) * dt
         stop_at_tdt && DiffEqBase.add_tstop!(integrator, tnext)
         while !reached_tstop(integrator, tnext, stop_at_tdt)
+            step_header!(integrator)
             @timeit_debug "check_error" DiffEqBase.check_error!(integrator) ∉ (
-                SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default) && return
+                SciMLBase.ReturnCode.Success, SciMLBase.ReturnCode.Default)&&return
             __step!(integrator)
+            step_footer!(integrator)
         end
     end
 end
@@ -310,7 +509,7 @@ end
 # Interpolation
 # TODO via https://github.com/SciML/SciMLBase.jl/blob/master/src/interpolation.jl
 function linear_interpolation!(y, t, y1, y2, t1, t2)
-    y .= y1 + (t-t1) * (y2-y1)/(t2-t1)
+    y .= y1 + (t - t1) * (y2 - y1) / (t2 - t1)
 end
 function (integrator::OperatorSplittingIntegrator)(tmp, t)
     linear_interpolation!(
@@ -331,7 +530,7 @@ end
 """
     step_accept_controller!(::OperatorSplittingIntegrator)
 
-Updates `_dt` of the integrator if the step is accepted and the operator splitting algorithm is adaptive.
+Updates `dtcache` of the integrator if the step is accepted and the operator splitting algorithm is adaptive.
 """
 @inline function step_accept_controller!(integrator::OperatorSplittingIntegrator)
     algorithm = integrator.alg
@@ -342,7 +541,7 @@ end
 """
     step_reject_controller!(::OperatorSplittingIntegrator)
 
-Updates `_dt` of the integrator if the step is rejected and the the operator splitting algorithm is adaptive.
+Updates `dtcache` of the integrator if the step is rejected and the the operator splitting algorithm is adaptive.
 """
 @inline function step_reject_controller!(integrator::OperatorSplittingIntegrator)
     algorithm = integrator.alg
@@ -372,14 +571,6 @@ function SciMLBase.done(integrator::OperatorSplittingIntegrator)
     elseif isempty(integrator.tstops)
         DiffEqBase.postamble!(integrator)
         return true
-        # elseif integrator.just_hit_tstop
-        # integrator.just_hit_tstop = false
-        # if integrator.opts.stop_at_next_tstop
-        #     postamble!(integrator)
-        #     return true
-        # end
-        # else
-        # @error "What to do here?"
     end
     false
 end
@@ -389,38 +580,9 @@ function DiffEqBase.postamble!(integrator::OperatorSplittingIntegrator)
 end
 
 function __step!(integrator)
-    (; dtchangeable, tstops, _dt) = integrator
-
-    # update dt before incrementing u; if dt is changeable and there is
-    # a tstop within dt, reduce dt to tstop - t
-    integrator.dt = !isempty(tstops) && dtchangeable ?
-                    tdir(integrator) * min(_dt, abs(first(tstops) - integrator.t)) :
-                    tdir(integrator) * _dt
-
-    # Propagate information down into the subintegrator_tree
-    synchronize_subintegrator_tree!(integrator)
     tnext = integrator.t + integrator.dt
-
-    # Solve inner problems
     advance_solution_to!(integrator, tnext)
     stepsize_controller!(integrator)
-
-    # Update integrator
-    # increment t by dt, rounding to the first tstop if that is roughly
-    # equivalent up to machine precision; the specific bound of 100 * eps...
-    # is taken from OrdinaryDiffEq.jl
-    t_unit = oneunit(integrator.t)
-    max_t_error = 100 * eps(float(integrator.t / t_unit)) * t_unit
-    integrator.tprev = integrator.t
-    integrator.t = !isempty(tstops) && abs(first(tstops) - tnext) < max_t_error ?
-                   first(tstops) : tnext
-
-    step_accept_controller!(integrator)
-
-    # remove tstops that were just reached
-    while !isempty(tstops) && reached_tstop(integrator, first(tstops))
-        pop!(tstops)
-    end
 end
 
 # solvers need to define this interface
@@ -430,9 +592,16 @@ end
 
 function advance_solution_to!(outer_integrator::OperatorSplittingIntegrator,
         integrator::DiffEqBase.DEIntegrator, solution_indices, sync, cache, tend)
-    dt = tend-integrator.t
+    dt = tend - integrator.t
     SciMLBase.step!(integrator, dt, true)
 end
+
+# ----------------------------------- SciMLBase.jl Integrator Interface ------------------------------------
+SciMLBase.has_stats(::OperatorSplittingIntegrator) = true
+
+SciMLBase.has_tstop(integrator::OperatorSplittingIntegrator) = !isempty(integrator.tstops)
+SciMLBase.first_tstop(integrator::OperatorSplittingIntegrator) = first(integrator.tstops)
+SciMLBase.pop_tstop!(integrator::OperatorSplittingIntegrator) = pop!(integrator.tstops)
 
 DiffEqBase.get_dt(integrator::OperatorSplittingIntegrator) = integrator.dt
 function set_dt!(integrator::OperatorSplittingIntegrator, dt)
@@ -463,7 +632,8 @@ function synchronize_subintegrator_tree!(integrator::OperatorSplittingIntegrator
     synchronize_subintegrator!(integrator.subintegrator_tree, integrator)
 end
 
-@unroll function synchronize_subintegrator!(subintegrator_tree::Tuple, integrator::OperatorSplittingIntegrator)
+@unroll function synchronize_subintegrator!(
+        subintegrator_tree::Tuple, integrator::OperatorSplittingIntegrator)
     @unroll for subintegrator in subintegrator_tree
         synchronize_subintegrator!(subintegrator, integrator)
     end
@@ -510,7 +680,8 @@ function build_subintegrator_tree_with_cache(
         length(f.functions)
     )
 
-    subintegrator_tree = ntuple(i -> subintegrator_tree_with_caches[i][1], length(f.functions))
+    subintegrator_tree = ntuple(
+        i -> subintegrator_tree_with_caches[i][1], length(f.functions))
     caches = ntuple(i -> subintegrator_tree_with_caches[i][2], length(f.functions))
 
     # TODO fix mixed device type problems we have to be smarter
@@ -575,7 +746,7 @@ function build_subintegrator_tree_with_cache(
     u = @view uouter[solution_indices]
 
     integrator = DiffEqBase.__init(
-        SciMLBase.ODEProblem(f, u, (t0, min(t0+dt, tf)), p),
+        SciMLBase.ODEProblem(f, u, (t0, min(t0 + dt, tf)), p),
         alg;
         dt,
         saveat = (),
