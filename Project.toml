@@ -13,7 +13,7 @@ UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 Unrolled = "9602ed7d-8fef-5bc8-8597-8f21381861e8"
 
 [compat]
-DataStructures = "0.18.22"
+DataStructures = "0.18.22, 0.19"
 DiffEqBase = "6.165.1"
 OrdinaryDiffEqCore = "1.19.0"
 OrdinaryDiffEqTsit5 = "1.1.0"
