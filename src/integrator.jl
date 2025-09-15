@@ -581,6 +581,7 @@ end
 
 function __step!(integrator)
     tnext = integrator.t + integrator.dt
+    synchronize_subintegrator_tree!(integrator)
     advance_solution_to!(integrator, tnext)
     stepsize_controller!(integrator)
 end
