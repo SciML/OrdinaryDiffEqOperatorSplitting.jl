@@ -158,7 +158,7 @@ end
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
             ufinal = copy(integrator.u)
-            @test isapprox(ufinal, trueu, atol = 1e-2)
+            @test isapprox(ufinal, trueu, atol = 1e-6)
             @test integrator.t ≈ tspan[2]
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
@@ -211,7 +211,7 @@ end
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
             ufinal = copy(integrator.u)
-            @test isapprox(ufinal, trueu, atol = 1e-2)
+            @test isapprox(ufinal, trueu, atol = 1e-6)
             @test integrator.t ≈ tspan[2]
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
