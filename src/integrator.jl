@@ -101,6 +101,9 @@ function DiffEqBase.__init(
     dt = tf > t0 ? dt : -dt
     tType = typeof(dt)
 
+    # Warn if the algorithm is non-adaptive but the user tries to make it adaptive.
+    (!DiffEqBase.isadaptive(alg) && adaptive && verbose) && warn("The algorithm $alg is not adaptive.")
+
     dtchangeable = true # DiffEqBase.isadaptive(alg)
 
     if tstops isa AbstractArray || tstops isa Tuple || tstops isa Number
