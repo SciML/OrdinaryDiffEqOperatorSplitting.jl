@@ -6,12 +6,13 @@ end
 
 IntegratorStats() = IntegratorStats(0, 0)
 
-Base.@kwdef mutable struct IntegratorOptions{tType, fType, F3}
+Base.@kwdef mutable struct IntegratorOptions{tType, fType, F2, F3}
     adaptive::Bool
     dtmin::tType = eps(Float64)
     dtmax::tType = Inf
     failfactor::fType = 4.0
     verbose::Bool = false
+    internalnorm::F2 = DiffEqBase.ODE_DEFAULT_NORM
     isoutofdomain::F3 = DiffEqBase.ODE_DEFAULT_ISOUTOFDOMAIN
 end
 
@@ -70,6 +71,7 @@ mutable struct OperatorSplittingIntegrator{
     synchronizer_tree::syncTreeType
     iter::Int
     controller::controllerType
+    EEst::Float64 # TODO controller cache
     opts::optionsType
     stats::IntegratorStats
     tdir::tType
@@ -168,6 +170,7 @@ function DiffEqBase.__init(
         build_synchronizer_tree(prob.f),
         0,
         controller,
+        NaN,
         IntegratorOptions(; verbose, adaptive),
         IntegratorStats(),
         tType(tstops_internal.ordering isa DataStructures.FasterForward ? 1 : -1)

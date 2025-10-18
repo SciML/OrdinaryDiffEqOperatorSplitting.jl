@@ -92,6 +92,8 @@ function forward_sync_internal!(outer_integrator::OperatorSplittingIntegrator,
     @views uouter = outer_integrator.u[solution_indices]
     sync_vectors!(inner_integrator.uprev, uouter)
     sync_vectors!(inner_integrator.u, uouter)
+    inner_integrator.t = outer_integrator.t
+    inner_integrator.dt = outer_integrator.dt
     SciMLBase.u_modified!(inner_integrator, true)
 end
 function backward_sync_internal!(outer_integrator::OperatorSplittingIntegrator,
