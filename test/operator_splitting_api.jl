@@ -6,6 +6,7 @@ import SciMLBase: ReturnCode
 import DiffEqBase: DiffEqBase, ODEFunction, ODEProblem
 using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqTsit5
+using ModelingToolkit
 
 # Reference
 tspan = (0.0, 100.0)
@@ -32,7 +33,7 @@ function ode1(du, u, p, t)
 end
 f1 = ODEFunction(ode1)
 
-# Offdiagonal components
+# Off-diagonal components
 function ode2(du, u, p, t)
     du[1] = -0.01u[2]
     du[2] = -0.01u[1]
@@ -46,6 +47,21 @@ function ode3(du, u, p, t)
 end
 f3 = ODEFunction(ode3)
 # The time stepper carries the individual solver information.
+
+@independent_variables time
+Dt = Differential(time)
+@mtkmodel TestModelODE2 begin
+    @variables begin
+        u1(time)
+        u2(time)
+    end
+    @equations begin
+        Dt(u1) ~ -0.01u2
+        Dt(u2) ~ -0.01u1
+    end
+end
+@named testmodel2 = TestModelODE2()
+testsys2 = mtkcompile(testmodel2; sort_eqs=false)
 
 # Test whether adaptive code path works in principle
 struct FakeAdaptiveAlgorithm{T} <: OS.AbstractOperatorSplittingAlgorithm
@@ -124,10 +140,12 @@ end
     # ode_true and ode1/ode2 side by side to see how they connect.
     f1dofs = [1, 2, 3]
     f2dofs = [1, 3]
-    fsplit1 = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
+    fsplit1a = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
+    fsplit1b = GenericSplitFunction((f1, testsys2), (f1dofs, f2dofs))
 
     # Now the usual setup just with our new problem type.
-    prob1 = OperatorSplittingProblem(fsplit1, u0, tspan)
+    prob1a = OperatorSplittingProblem(fsplit1a, u0, tspan)
+    prob1b = OperatorSplittingProblem(fsplit1b, u0, tspan)
 
     # Note that we define the dof indices w.r.t the parent function.
     # Hence the indices for `fsplit2_inner` are.
@@ -140,10 +158,14 @@ end
     prob2 = OperatorSplittingProblem(fsplit2_outer, u0, tspan)
     for TimeStepperType in (LieTrotterGodunov, FakeAdaptiveLTG)
         @testset "Solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
-            (prob1, TimeStepperType((Euler(), Euler()))),
-            (prob1, TimeStepperType((Tsit5(), Euler()))),
-            (prob1, TimeStepperType((Euler(), Tsit5()))),
-            (prob1, TimeStepperType((Tsit5(), Tsit5()))),
+            (prob1a, TimeStepperType((Euler(), Euler()))),
+            (prob1a, TimeStepperType((Tsit5(), Euler()))),
+            (prob1a, TimeStepperType((Euler(), Tsit5()))),
+            (prob1a, TimeStepperType((Tsit5(), Tsit5()))),
+            (prob1b, TimeStepperType((Euler(), Euler()))),
+            (prob1b, TimeStepperType((Tsit5(), Euler()))),
+            (prob1b, TimeStepperType((Euler(), Tsit5()))),
+            (prob1b, TimeStepperType((Tsit5(), Tsit5()))),
             (prob2, TimeStepperType((Euler(), TimeStepperType((Euler(), Euler()))))),
             (prob2, TimeStepperType((Euler(), TimeStepperType((Tsit5(), Euler()))))),
             (prob2, TimeStepperType((Euler(), TimeStepperType((Euler(), Tsit5()))))),
@@ -201,7 +223,7 @@ end
 
     for TimeStepperType in (FakeAdaptiveLTG,)
         @testset "Adaptive solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
-            (prob1, TimeStepperType((Tsit5(), Tsit5()))),
+            (prob1a, TimeStepperType((Tsit5(), Tsit5()))),
             (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Tsit5())))))
         )
             # The remaining code works as usual.
@@ -272,11 +294,11 @@ end
         prob_NaN = OperatorSplittingProblem(fsplit_NaN, u0, tspan)
 
         for TimeStepperType in (LieTrotterGodunov,)
-            @testset "Solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
-                (prob1, TimeStepperType((Euler(), Euler()))),
-                (prob1, TimeStepperType((Tsit5(), Euler()))),
-                (prob1, TimeStepperType((Euler(), Tsit5()))),
-                (prob1, TimeStepperType((Tsit5(), Tsit5())))
+            @testset "Solver type $TimeStepperType | $tstepper" for tstepper in (
+                TimeStepperType((Euler(), Euler())),
+                TimeStepperType((Tsit5(), Euler())),
+                TimeStepperType((Euler(), Tsit5())),
+                TimeStepperType((Tsit5(), Tsit5()))
             )
                 integrator_NaN = DiffEqBase.init(
                     prob_NaN, tstepper, dt = dt, verbose = true, alias_u0 = false)
