@@ -52,6 +52,8 @@ end
     end
 end
 
+OrdinaryDiffEqCore.alg_order(alg::LieTrotterGodunov) = 1
+
 # Adaptive Lie-Trotter-Godunov Splitting Implementation
 """
     PalindromicPairLieTrotterGodunov <: AbstractOperatorSplittingAlgorithm
@@ -106,7 +108,6 @@ end
     # u0 .= outer_integrator.u
     u0 = copy(outer_integrator.u)
 
-
     # For each inner operator
     i = 0
     @unroll for subinteg in subintegrators
@@ -132,7 +133,6 @@ end
     u2 = copy(outer_integrator.u)
 
     # Roll back
-    # rollback_palindromic(subintegrators, outer_integrator, idxs, synchronizer)
     outer_integrator.u .= u0
 
     @unroll for subinteg in rsubintegrators
@@ -163,16 +163,17 @@ end
     outer_integrator.u ./= 2
 end
 
-DiffEqBase.isadaptive(alg::PalindromicPairLieTrotterGodunov) = true
+OrdinaryDiffEqCore.isadaptive(alg::PalindromicPairLieTrotterGodunov) = true
+OrdinaryDiffEqCore.alg_order(alg::PalindromicPairLieTrotterGodunov) = 2
 
-@inline function stepsize_controller!(integrator::OperatorSplittingIntegrator, alg::PalindromicPairLieTrotterGodunov)
-    return nothing
-end
+# @inline function stepsize_controller!(integrator::OperatorSplittingIntegrator, alg::PalindromicPairLieTrotterGodunov)
+#     return nothing
+# end
 
-@inline function step_accept_controller!(integrator::OperatorSplittingIntegrator, alg::PalindromicPairLieTrotterGodunov, q)
-    integrator.dt = integrator.dtcache
-    return nothing
-end
-@inline function step_reject_controller!(integrator::OperatorSplittingIntegrator, alg::PalindromicPairLieTrotterGodunov, q)
-    return nothing # Do nothing
-end
+# @inline function step_accept_controller!(integrator::OperatorSplittingIntegrator, alg::PalindromicPairLieTrotterGodunov, q)
+#     integrator.dt = integrator.dtcache
+#     return nothing
+# end
+# @inline function step_reject_controller!(integrator::OperatorSplittingIntegrator, alg::PalindromicPairLieTrotterGodunov, q)
+#     return nothing # Do nothing
+# end
