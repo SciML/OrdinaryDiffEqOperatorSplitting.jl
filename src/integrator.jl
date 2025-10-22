@@ -182,6 +182,7 @@ function DiffEqBase.reinit!(
         u0 = integrator.sol.prob.u0;
         t0 = integrator.sol.prob.tspan[1],
         tf = integrator.sol.prob.tspan[2],
+        dt = isadaptive(integrator) ? nothing : integrator.dtcache,
         erase_sol = false,
         tstops = integrator._tstops,
         saveat = integrator._saveat,
@@ -192,6 +193,9 @@ function DiffEqBase.reinit!(
     integrator.uprev .= u0
     integrator.t = t0
     integrator.tprev = t0
+    if dt !== nothing
+        integrator.dt = dt
+    end
     integrator.tstops, integrator.saveat = tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     integrator.iter = 0
     if erase_sol
@@ -214,7 +218,7 @@ function DiffEqBase.reinit!(
         u0,
         1:length(u0),
         integrator.subintegrator_tree;
-        t0, tf,
+        t0, tf, dt,
         erase_sol,
         tstops,
         saveat,
@@ -228,8 +232,13 @@ function subreinit!(
         u0,
         solution_indices,
         subintegrator::DiffEqBase.DEIntegrator;
+        dt,
         kwargs...
 )
+    # dt is not reset as expected in reinit!
+    if dt !== nothing
+        subintegrator.dt = dt
+    end
     DiffEqBase.reinit!(subintegrator, u0[solution_indices]; kwargs...)
 end
 
