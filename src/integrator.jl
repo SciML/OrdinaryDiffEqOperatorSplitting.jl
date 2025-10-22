@@ -175,7 +175,7 @@ function DiffEqBase.__init(
         0,
         controller,
         NaN,
-        IntegratorOptions(; verbose, adaptive),
+        IntegratorOptions(; verbose, adaptive, kwargs...),
         IntegratorStats(),
         tType(tstops_internal.ordering isa DataStructures.FasterForward ? 1 : -1)
     )
