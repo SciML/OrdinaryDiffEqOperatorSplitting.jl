@@ -46,8 +46,9 @@ end
         if !(subinteg isa Tuple) &&
            subinteg.sol.retcode ∉
            (SciMLBase.ReturnCode.Default, SciMLBase.ReturnCode.Success)
-            return
+            outer_integrator.force_stepfail = true
         end
+        outer_integrator.force_stepfail && return
         backward_sync_subintegrator!(outer_integrator, subinteg, idxs, synchronizer)
     end
 end
@@ -122,8 +123,9 @@ end
         if !(subinteg isa Tuple) &&
            subinteg.sol.retcode ∉
            (SciMLBase.ReturnCode.Default, SciMLBase.ReturnCode.Success)
-            return
+            integrator.force_stepfail = true
         end
+        outer_integrator.force_stepfail && return
         backward_sync_subintegrator!(outer_integrator, subinteg, idxs, synchronizer)
     end
 
@@ -146,6 +148,7 @@ end
         if !(subinteg isa Tuple) &&
         subinteg.sol.retcode ∉
         (SciMLBase.ReturnCode.Default, SciMLBase.ReturnCode.Success)
+            integrator.force_stepfail = true
             return
         end
         backward_sync_subintegrator!(outer_integrator, subinteg, idxs, synchronizer)
