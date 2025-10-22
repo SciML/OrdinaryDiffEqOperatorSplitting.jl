@@ -7,7 +7,7 @@ import Unrolled: @unroll
 
 import SciMLBase, DiffEqBase, DataStructures
 
-import OrdinaryDiffEqCore
+import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isadaptive, alg_order
 
 import UnPack: @unpack
 import DiffEqBase: init, TimeChoiceIterator
@@ -16,14 +16,13 @@ abstract type AbstractOperatorSplitFunction <: DiffEqBase.AbstractODEFunction{tr
 abstract type AbstractOperatorSplittingAlgorithm end
 abstract type AbstractOperatorSplittingCache end
 
-@inline DiffEqBase.isadaptive(::AbstractOperatorSplittingAlgorithm) = false
-
 include("function.jl")
 include("problem.jl")
 include("integrator.jl")
 include("solver.jl")
 include("utils.jl")
+include("controller.jl")
 
-export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov
+export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov, PalindromicPairLieTrotterGodunov
 
 end

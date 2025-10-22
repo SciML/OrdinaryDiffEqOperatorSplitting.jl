@@ -92,6 +92,7 @@ function forward_sync_internal!(outer_integrator::OperatorSplittingIntegrator,
     @views uouter = outer_integrator.u[solution_indices]
     sync_vectors!(inner_integrator.uprev, uouter)
     sync_vectors!(inner_integrator.u, uouter)
+    inner_integrator.t = outer_integrator.t
     SciMLBase.u_modified!(inner_integrator, true)
 end
 function backward_sync_internal!(outer_integrator::OperatorSplittingIntegrator,
@@ -162,4 +163,19 @@ end
 
 function build_synchronizer_tree_recursion(f, synchronizer)
     return synchronizer
+end
+
+function prepare_subintegrators_to_redo_step!(integrator)
+    prepare_subintegrators_to_redo_step!(integrator.subintegrator_tree, integrator)
+end
+
+@unroll function prepare_subintegrators_to_redo_step!(subintegrator_tree::Tuple, outer_integrator)
+    @unroll for subintegrator in subintegrator_tree
+        prepare_subintegrators_to_redo_step!(subintegrator, outer_integrator)
+    end
+end
+function prepare_subintegrators_to_redo_step!(subintegrator, outer_integrator)
+    subintegrator.t = outer_integrator.t
+    subintegrator.u .= subintegrator.uprev
+    DiffEqBase.u_modified!(subintegrator, true)
 end

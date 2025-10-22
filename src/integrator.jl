@@ -6,12 +6,13 @@ end
 
 IntegratorStats() = IntegratorStats(0, 0)
 
-Base.@kwdef mutable struct IntegratorOptions{tType, fType, F3}
+Base.@kwdef mutable struct IntegratorOptions{tType, fType, F2, F3}
     adaptive::Bool
     dtmin::tType = eps(Float64)
     dtmax::tType = Inf
     failfactor::fType = 4.0
     verbose::Bool = false
+    internalnorm::F2 = DiffEqBase.ODE_DEFAULT_NORM
     isoutofdomain::F3 = DiffEqBase.ODE_DEFAULT_ISOUTOFDOMAIN
 end
 
@@ -70,6 +71,7 @@ mutable struct OperatorSplittingIntegrator{
     synchronizer_tree::syncTreeType
     iter::Int
     controller::controllerType
+    EEst::Float64 # TODO integrate with controller cache
     opts::optionsType
     stats::IntegratorStats
     tdir::tType
@@ -139,6 +141,10 @@ function DiffEqBase.__init(
         adaptive, verbose
     )
 
+    if controller === nothing && adaptive
+        controller = default_controller(alg, cache)
+    end
+
     integrator = OperatorSplittingIntegrator(
         prob.f,
         alg,
@@ -168,7 +174,8 @@ function DiffEqBase.__init(
         build_synchronizer_tree(prob.f),
         0,
         controller,
-        IntegratorOptions(; verbose, adaptive),
+        NaN,
+        IntegratorOptions(; verbose, adaptive, kwargs...),
         IntegratorStats(),
         tType(tstops_internal.ordering isa DataStructures.FasterForward ? 1 : -1)
     )
@@ -280,13 +287,17 @@ increment_iteration(integrator::OperatorSplittingIntegrator) = integrator.iter +
 # Controller interface
 function reject_step!(integrator::OperatorSplittingIntegrator)
     OrdinaryDiffEqCore.increment_reject!(integrator.stats)
-    reject_step!(integrator, integrator.cache, integrator.controller)
+    reject_step!(integrator, integrator.controller)
 end
-function reject_step!(integrator::OperatorSplittingIntegrator, cache, controller)
+function reject_step!(integrator::OperatorSplittingIntegrator, controller)
     integrator.u .= integrator.uprev
-    # TODO what do we need to do with the subintegrators?
+    if !integrator.force_stepfail
+        step_reject_controller!(integrator, controller, integrator.alg)
+    end
+    # We need to roll-back the sub-integrators
+    prepare_subintegrators_to_redo_step!(integrator)
 end
-function reject_step!(integrator::OperatorSplittingIntegrator, cache, ::Nothing)
+function reject_step!(integrator::OperatorSplittingIntegrator, ::Nothing)
     if length(integrator.uprev) == 0
         error("Cannot roll back integrator. Aborting time integration step at $(integrator.t).")
     end
@@ -297,9 +308,9 @@ function should_accept_step(integrator::OperatorSplittingIntegrator)
     if integrator.force_stepfail || integrator.isout
         return false
     end
-    return should_accept_step(integrator, integrator.cache, integrator.controller)
+    return should_accept_step(integrator, integrator.controller)
 end
-function should_accept_step(integrator::OperatorSplittingIntegrator, cache, ::Nothing)
+function should_accept_step(integrator::OperatorSplittingIntegrator, ::Nothing)
     return !(integrator.force_stepfail)
 end
 function accept_step!(integrator::OperatorSplittingIntegrator)
@@ -366,7 +377,7 @@ function step_footer!(integrator::OperatorSplittingIntegrator)
         integrator.t = ttmp#OrdinaryDiffEqCore.fixed_t_for_floatingpoint_error!(integrator, ttmp)
         # OrdinaryDiffEqCore.handle_callbacks!(integrator)
         step_accept_controller!(integrator) # Noop for non-adaptive algorithms
-    elseif integrator.force_stepfail
+    elseif integrator.force_stepfail # Rejected by solver 
         if SciMLBase.isadaptive(integrator)
             step_reject_controller!(integrator)
             OrdinaryDiffEqCore.post_newton_controller!(integrator, integrator.alg)
@@ -525,9 +536,8 @@ end
 Updates the controller using the current state of the integrator if the operator splitting algorithm is adaptive.
 """
 @inline function stepsize_controller!(integrator::OperatorSplittingIntegrator)
-    algorithm = integrator.alg
-    DiffEqBase.isadaptive(algorithm) || return nothing
-    stepsize_controller!(integrator, algorithm)
+    DiffEqBase.isadaptive(integrator) || return nothing
+    stepsize_controller!(integrator, integrator.controller, integrator.alg)
 end
 
 """
@@ -536,9 +546,8 @@ end
 Updates `dtcache` of the integrator if the step is accepted and the operator splitting algorithm is adaptive.
 """
 @inline function step_accept_controller!(integrator::OperatorSplittingIntegrator)
-    algorithm = integrator.alg
-    DiffEqBase.isadaptive(algorithm) || return nothing
-    step_accept_controller!(integrator, algorithm, nothing)
+    DiffEqBase.isadaptive(integrator) || return nothing
+    step_accept_controller!(integrator, integrator.controller, integrator.alg)
 end
 
 """
@@ -547,9 +556,8 @@ end
 Updates `dtcache` of the integrator if the step is rejected and the the operator splitting algorithm is adaptive.
 """
 @inline function step_reject_controller!(integrator::OperatorSplittingIntegrator)
-    algorithm = integrator.alg
-    DiffEqBase.isadaptive(algorithm) || return nothing
-    step_reject_controller!(integrator, algorithm, nothing)
+    DiffEqBase.isadaptive(integrator) || return nothing
+    step_reject_controller!(integrator, integrator.controller, integrator.alg)
 end
 
 # helper functions for dealing with time-reversed integrators in the same way
@@ -646,7 +654,7 @@ end
 function synchronize_subintegrator!(
         subintegrator::SciMLBase.DEIntegrator, integrator::OperatorSplittingIntegrator)
     @unpack t, dt = integrator
-    @assert subintegrator.t == t
+    @assert subintegrator.t == t "Integrators out of sync. The outer integrator is at $t, but inner integrator is at $(subintegrator.t)"
     if !DiffEqBase.isadaptive(subintegrator)
         SciMLBase.set_proposed_dt!(subintegrator, dt)
     end
