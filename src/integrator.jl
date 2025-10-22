@@ -736,7 +736,8 @@ function build_subintegrator_tree_with_cache(
 end
 
 function build_subintegrator_tree_with_cache(
-        prob::OperatorSplittingProblem, alg::SciMLBase.AbstractODEAlgorithm,
+        prob::OperatorSplittingProblem,
+        alg::SciMLBase.AbstractODEAlgorithm,
         f::F, p::P,
         uprevouter::S, uouter::S,
         solution_indices,
@@ -749,8 +750,18 @@ function build_subintegrator_tree_with_cache(
     uprev = @view uprevouter[solution_indices]
     u = @view uouter[solution_indices]
 
+    # When working with MTK, we want to pass f as a system down here.
+    # In that case ODEProblem constructs the correct parameter struct.
+    # If the system does not have parameters in first place, then
+    # The NullParameters object will be constructed automatically.
+    prob2 = if p isa DiffEqBase.NullParameters
+        SciMLBase.ODEProblem(f, u, (t0, min(t0 + dt, tf)))
+    else
+        SciMLBase.ODEProblem(f, u, (t0, min(t0 + dt, tf)), p)
+    end
+
     integrator = DiffEqBase.__init(
-        SciMLBase.ODEProblem(f, u, (t0, min(t0 + dt, tf)), p),
+        prob2,
         alg;
         dt,
         saveat = (),
