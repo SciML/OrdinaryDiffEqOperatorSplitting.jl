@@ -165,7 +165,7 @@ end
             @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
             @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
 
-            DiffEqBase.reinit!(integrator)
+            DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
             end
@@ -176,7 +176,7 @@ end
             @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
             @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
 
-            DiffEqBase.reinit!(integrator)
+            DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
             end
@@ -187,7 +187,7 @@ end
             @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
             @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
 
-            DiffEqBase.reinit!(integrator)
+            DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
@@ -218,8 +218,7 @@ end
             @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
             @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
 
-            DiffEqBase.reinit!(integrator)
-            integrator.dt = dt
+            DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
             end
@@ -228,10 +227,9 @@ end
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
             @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)+1 # We need one extra step after reinit for some reason...
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
 
-            DiffEqBase.reinit!(integrator)
-            integrator.dt = dt
+            DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
             end
@@ -240,10 +238,9 @@ end
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
             @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)+1
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
 
-            DiffEqBase.reinit!(integrator)
-            integrator.dt = dt
+            DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
@@ -251,7 +248,7 @@ end
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
             @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)+1
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
         end
     end
 
