@@ -23,3 +23,11 @@ mutable struct OperatorSplittingProblem{
 end
 
 num_operators(prob::OperatorSplittingProblem) = num_operators(prob.f)
+
+recursive_null_parameters(f::AbstractOperatorSplitFunction) = @error "Not implemented"
+function recursive_null_parameters(f::GenericSplitFunction)
+    ntuple(i->recursive_null_parameters(get_operator(f, i)), length(f.functions))
+end
+function recursive_null_parameters(f) # Wildcard for leafs
+    DiffEqBase.NullParameters()
+end

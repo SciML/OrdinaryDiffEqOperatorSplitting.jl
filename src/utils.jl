@@ -100,10 +100,14 @@ function backward_sync_internal!(outer_integrator::OperatorSplittingIntegrator,
     sync_vectors!(uouter, inner_integrator.u)
 end
 
-# This is a noop, because operator splitting integrators do not have parameters
+# This is a noop, because operator splitting integrators do not have parameters for now
 function forward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
         inner_integrator::OperatorSplittingIntegrator, sync::NoExternalSynchronization)
     nothing
+end
+function forward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
+    inner_integrator::DiffEqBase.DEIntegrator, sync::NoExternalSynchronization)
+nothing
 end
 function forward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
         inner_integrator::DiffEqBase.DEIntegrator, sync)
@@ -115,25 +119,23 @@ function backward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
     nothing
 end
 function backward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
+    inner_integrator::DiffEqBase.DEIntegrator, sync::NoExternalSynchronization)
+    nothing
+end
+function backward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
         inner_integrator::DiffEqBase.DEIntegrator, sync)
     synchronize_solution_with_parameters!(outer_integrator, inner_integrator.p, sync)
 end
 
-function synchronize_solution_with_parameters!(outer_integrator::OperatorSplittingIntegrator, p::Any, sync)
-    error("Outer synchronizer not dispatched for parameter type $(typeof(p)).")
+function synchronize_solution_with_parameters!(outer_integrator::OperatorSplittingIntegrator, p, sync)
+    @warn "Outer synchronizer not dispatched for parameter type $(typeof(p)) with synchronizer type $(typeof(sync))." maxlog=1
+    nothing
 end
-
 # If we encounter NullParameters, then we have the convention for the standard sync map that no external solution is necessary.
 function synchronize_solution_with_parameters!(
         outer_integrator::OperatorSplittingIntegrator, p::DiffEqBase.NullParameters, sync)
     nothing
 end
-
-# Default convention is that the first parameter serves as a buffer for the external solution
-# function synchronize_solution_with_parameters!(outer_integrator::OperatorSplittingIntegrator, p::Tuple, sync)
-#     @views uouter = outer_integrator.u[sync.parameter_indices]
-#     sync_vectors!(p[1], uouter)
-# end
 
 # TODO this should go into a custom tree data structure instead of into a tuple-tree
 function build_solution_index_tree(f::GenericSplitFunction)
