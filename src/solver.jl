@@ -21,8 +21,8 @@ function init_cache(f::GenericSplitFunction, alg::LieTrotterGodunov;
         alias_uprev = true,
         alias_u = false
 )
-    _uprev = alias_uprev ? uprev : SciMLBase.recursivecopy(uprev)
-    _u = alias_u ? u : SciMLBase.recursivecopy(u)
+    _uprev = alias_uprev ? uprev : RecursiveArrayTools.recursivecopy(uprev)
+    _u = alias_u ? u : RecursiveArrayTools.recursivecopy(u)
     LieTrotterGodunovCache(_u, _uprev, inner_caches)
 end
 
@@ -45,7 +45,7 @@ end
             outer_integrator, subinteg, idxs, synchronizer, cache, tnext)
         if !(subinteg isa Tuple) &&
            subinteg.sol.retcode ∉
-           (SciMLBase.ReturnCode.Default, SciMLBase.ReturnCode.Success)
+           (ReturnCode.Default, ReturnCode.Success)
             return
         end
         backward_sync_subintegrator!(outer_integrator, subinteg, idxs, synchronizer)

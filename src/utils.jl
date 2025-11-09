@@ -48,7 +48,7 @@ function sync_vectors!(a, b)
 end
 
 """
-     forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
+     forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
 
 This function is responsible of copying the solution and parameters of the outer integrator and the synchronized subintegrators with the information given into the inner integrator.
 If the inner integrator is synchronized with other inner integrators using `sync`, the function `forward_sync_external!` shall be dispatched for `sync`.
@@ -56,13 +56,13 @@ The `sync` object is passed from the outside and is the main entry point to disp
 The `solution_indices` are global indices in the outer integrators solution vectors.
 """
 function forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
+        inner_integrator::DEIntegrator, solution_indices, sync)
     forward_sync_internal!(outer_integrator, inner_integrator, solution_indices)
     forward_sync_external!(outer_integrator, inner_integrator, sync)
 end
 
 """
-    backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
+    backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
 
 This function is responsible of copying the solution of the inner integrator back into outer integrator and the synchronized subintegrators.
 If the inner integrator is synchronized with other inner integrators using `sync`, the function `backward_sync_external!` shall be dispatched for `sync`.
@@ -70,7 +70,7 @@ The `sync` object is passed from the outside and is the main entry point to disp
 The `solution_indices` are global indices in the outer integrators solution vectors.
 """
 function backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DiffEqBase.DEIntegrator, solution_indices, sync)
+        inner_integrator::DEIntegrator, solution_indices, sync)
     backward_sync_internal!(outer_integrator, inner_integrator, solution_indices)
     backward_sync_external!(outer_integrator, inner_integrator, sync)
 end
@@ -88,14 +88,14 @@ function backward_sync_internal!(outer_integrator::OperatorSplittingIntegrator,
 end
 
 function forward_sync_internal!(outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DiffEqBase.DEIntegrator, solution_indices)
+        inner_integrator::DEIntegrator, solution_indices)
     @views uouter = outer_integrator.u[solution_indices]
     sync_vectors!(inner_integrator.uprev, uouter)
     sync_vectors!(inner_integrator.u, uouter)
     SciMLBase.u_modified!(inner_integrator, true)
 end
 function backward_sync_internal!(outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DiffEqBase.DEIntegrator, solution_indices)
+        inner_integrator::DEIntegrator, solution_indices)
     @views uouter = outer_integrator.u[solution_indices]
     sync_vectors!(uouter, inner_integrator.u)
 end
@@ -106,11 +106,11 @@ function forward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
     nothing
 end
 function forward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
-    inner_integrator::DiffEqBase.DEIntegrator, sync::NoExternalSynchronization)
+    inner_integrator::DEIntegrator, sync::NoExternalSynchronization)
 nothing
 end
 function forward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DiffEqBase.DEIntegrator, sync)
+        inner_integrator::DEIntegrator, sync)
     synchronize_solution_with_parameters!(outer_integrator, inner_integrator.p, sync)
 end
 
@@ -119,11 +119,11 @@ function backward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
     nothing
 end
 function backward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
-    inner_integrator::DiffEqBase.DEIntegrator, sync::NoExternalSynchronization)
+    inner_integrator::DEIntegrator, sync::NoExternalSynchronization)
     nothing
 end
 function backward_sync_external!(outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DiffEqBase.DEIntegrator, sync)
+        inner_integrator::DEIntegrator, sync)
     synchronize_solution_with_parameters!(outer_integrator, inner_integrator.p, sync)
 end
 
@@ -133,7 +133,7 @@ function synchronize_solution_with_parameters!(outer_integrator::OperatorSplitti
 end
 # If we encounter NullParameters, then we have the convention for the standard sync map that no external solution is necessary.
 function synchronize_solution_with_parameters!(
-        outer_integrator::OperatorSplittingIntegrator, p::DiffEqBase.NullParameters, sync)
+        outer_integrator::OperatorSplittingIntegrator, p::NullParameters, sync)
     nothing
 end
 
