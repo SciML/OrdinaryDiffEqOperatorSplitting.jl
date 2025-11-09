@@ -34,7 +34,10 @@ end
 PIController(; qmin, qmax, qsteady_min, qsteady_max, qoldinit, beta1, beta2, gamma, q11) = PIController(qmin, qmax, qsteady_min, qsteady_max, qoldinit, beta1, beta2, gamma, q11, qoldinit, qoldinit)
 
 function default_controller(alg, cache)
-    @assert isadaptive(alg)
+    if !isadaptive(alg)
+        @warn "Trying to construct a controller for $alg, but the algorithm is not adaptive."
+        return nothing
+    end
 
     beta2 = OrdinaryDiffEqCore.beta2_default(alg)
     beta1 = OrdinaryDiffEqCore.beta1_default(alg, beta2)

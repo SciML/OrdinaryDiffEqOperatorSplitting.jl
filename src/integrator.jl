@@ -131,6 +131,8 @@ function DiffEqBase.__init(
 
     callback = DiffEqBase.CallbackSet(callback)
 
+    opts = IntegratorOptions(; verbose, adaptive, kwargs...)
+
     subintegrator_tree,
     cache = build_subintegrator_tree_with_cache(
         prob, alg,
@@ -138,7 +140,7 @@ function DiffEqBase.__init(
         1:length(u),
         t0, dt, tf,
         tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose
+        opts,
     )
 
     if controller === nothing && adaptive
@@ -175,7 +177,7 @@ function DiffEqBase.__init(
         0,
         controller,
         NaN,
-        IntegratorOptions(; verbose, adaptive, kwargs...),
+        opts,
         IntegratorStats(),
         tType(tstops_internal.ordering isa DataStructures.FasterForward ? 1 : -1)
     )
@@ -670,72 +672,37 @@ end
 # Dispatch for tree node construction
 function build_subintegrator_tree_with_cache(
         prob::OperatorSplittingProblem, alg::AbstractOperatorSplittingAlgorithm,
-        uprevouter::AbstractVector, uouter::AbstractVector,
-        solution_indices,
-        t0, dt, tf,
-        tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose
-)
-    (; f, p) = prob
-    subintegrator_tree_with_caches = ntuple(
-        i -> build_subintegrator_tree_with_cache(
-            prob,
-            alg.inner_algs[i],
-            get_operator(f, i),
-            p[i],
-            uprevouter, uouter,
-            f.solution_indices[i],
-            t0, dt, tf,
-            tstops, saveat, d_discontinuities, callback,
-            adaptive, verbose
-        ),
-        length(f.functions)
-    )
-
-    subintegrator_tree = ntuple(
-        i -> subintegrator_tree_with_caches[i][1], length(f.functions))
-    caches = ntuple(i -> subintegrator_tree_with_caches[i][2], length(f.functions))
-
-    # TODO fix mixed device type problems we have to be smarter
-    return subintegrator_tree,
-    init_cache(f, alg;
-        uprev = uprevouter, u = uouter, alias_u = true,
-        inner_caches = caches
-    )
-end
-
-function build_subintegrator_tree_with_cache(
-        prob::OperatorSplittingProblem, alg::AbstractOperatorSplittingAlgorithm,
         f::GenericSplitFunction, p::Tuple,
         uprevouter::AbstractVector, uouter::AbstractVector,
         solution_indices,
         t0, dt, tf,
-        tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose,
-        save_end = false,
-        controller = nothing
+        args...,
 )
-    subintegrator_tree_with_caches = ntuple(
-        i -> build_subintegrator_tree_with_cache(
-            prob,
-            alg.inner_algs[i],
-            get_operator(f, i),
-            p[i],
-            uprevouter, uouter,
-            f.solution_indices[i],
-            t0, dt, tf,
-            tstops, saveat, d_discontinuities, callback,
-            adaptive, verbose
-        ),
+    # subintegrator_tree_with_caches = ntuple(
+    #     i -> build_subintegrator_tree_with_cache(
+    #         OperatorSplittingProblem(),
+    #         alg.inner_algs[i],
+    #         get_operator(f, i),
+    #         p[i],
+    #         uprevouter, uouter,
+    #         f.solution_indices[i],
+    #         t0, dt, tf,
+    #         args...,
+    #     ),
+    #     length(f.functions)
+    # )
+
+    # subintegrator_tree_leafs = first.(subintegrator_tree_with_caches)
+    # inner_caches = last.(subintegrator_tree_with_caches)
+
+    subintegrator_tree = ntuple(
+        i-> DiffEqBase.__init()
         length(f.functions)
     )
 
-    subintegrator_tree = first.(subintegrator_tree_with_caches)
-    inner_caches = last.(subintegrator_tree_with_caches)
-
     # TODO fix mixed device type problems we have to be smarter
     uprev = @view uprevouter[solution_indices]
-    u = @view uouter[solution_indices]
+    u     = @view uouter[solution_indices]
     return subintegrator_tree,
     init_cache(f, alg;
         uprev = uprev, u = u,
@@ -749,13 +716,11 @@ function build_subintegrator_tree_with_cache(
         uprevouter::S, uouter::S,
         solution_indices,
         t0::T, dt::T, tf::T,
-        tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose,
-        save_end = false,
-        controller = nothing
+        opts,
+        args...,
 ) where {S, T, P, F}
     uprev = @view uprevouter[solution_indices]
-    u = @view uouter[solution_indices]
+    u     = @view uouter[solution_indices]
 
     integrator = DiffEqBase.__init(
         SciMLBase.ODEProblem(f, u, (t0, min(t0 + dt, tf)), p),
@@ -765,9 +730,9 @@ function build_subintegrator_tree_with_cache(
         d_discontinuities,
         save_everystep = false,
         advance_to_tstop = false,
-        adaptive,
-        controller,
-        verbose
+        opts.adaptive,
+        opts.verbose,
+        args...,
     )
 
     return integrator, integrator.cache
