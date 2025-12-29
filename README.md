@@ -75,3 +75,4 @@ end
 ## Available Solvers
 
 For the list of available solvers, please refer to the [OrdinaryDiffEqOperatorSplitting.jl Solvers](https://sciml.github.io/OrdinaryDiffEqOperatorSplitting.jl/dev/api-reference/#Solvers) pages.
+
