@@ -43,7 +43,7 @@ alg = LieTrotterGodunov(
 )
 
 # Right now OrdinaryDiffEqOperatorSplitting.jl does not implement the SciML solution interface,
-# but we can only intermediate solutions via the iterator interface.
+# but we can obtain intermediate solutions via the iterator interface.
 integrator = init(prob, alg, dt = 0.1)
 for (u, t) in TimeChoiceIterator(integrator, 0.0:0.5:1.0)
     @show t, u

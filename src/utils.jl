@@ -27,7 +27,7 @@ end
     need_sync(a, b)
 
 This function determines whether it is necessary to synchronize two objects with any solution information.
-A possible reason when no syncronization is necessary might be that the vectors alias each other in memory.
+A possible reason when no synchronization is necessary might be that the vectors alias each other in memory.
 """
 need_sync
 
@@ -39,7 +39,7 @@ need_sync(a::SubArray, b::SubArray) = a.parent !== b.parent
 """
     sync_vectors!(a, b)
 
-Copies the information in object b into object a, if syncronization is necessary.
+Copies the information in object b into object a, if synchronization is necessary.
 """
 function sync_vectors!(a, b)
     if need_sync(a, b) && a !== b
