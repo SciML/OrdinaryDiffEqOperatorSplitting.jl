@@ -18,6 +18,7 @@ Unrolled = "9602ed7d-8fef-5bc8-8597-8f21381861e8"
 CommonSolve = "0.2.4"
 DataStructures = "0.18.22, 0.19"
 DiffEqBase = "6.165.1"
+ExplicitImports = "1"
 ModelingToolkit = "10"
 OrdinaryDiffEqCore = "1.19.0, 2"
 OrdinaryDiffEqLowOrderRK = "1.7"
@@ -31,6 +32,7 @@ Unrolled = "0.1.5"
 julia = "1.10"
 
 [extras]
+ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
 OrdinaryDiffEqLowOrderRK = "1344f307-1e59-4825-a18e-ace9aa3fa4c6"
 OrdinaryDiffEqTsit5 = "b1df2697-797e-41e3-8120-5422d3b24e4a"
@@ -38,4 +40,4 @@ SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["ModelingToolkit", "OrdinaryDiffEqLowOrderRK", "OrdinaryDiffEqTsit5", "SafeTestsets", "Test"]
+test = ["ExplicitImports", "ModelingToolkit", "OrdinaryDiffEqLowOrderRK", "OrdinaryDiffEqTsit5", "SafeTestsets", "Test"]

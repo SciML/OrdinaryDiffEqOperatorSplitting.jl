@@ -4,3 +4,4 @@ using SafeTestsets
 @safetestset "Operator Splitting API" include("operator_splitting_api.jl")
 @safetestset "Aliasing" include("alias_u0.jl")
 @safetestset "Consistency" include("consistency.jl")
+@safetestset "Explicit Imports" include("explicit_imports.jl")
