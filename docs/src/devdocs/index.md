@@ -2,7 +2,7 @@
 
 ## Synchronizers API
 
-A key part of operator splitting algorithms in the synchronization logic. Parameters of one subproblem might need to be kept in sync with the solution of other subproblems and vice versa. To handle this efficiently OrdinaryDiffEqOperatorSplitting.jl provides a small set of utils.
+A key part of operator splitting algorithms is the synchronization logic. Parameters of one subproblem might need to be kept in sync with the solution of other subproblems and vice versa. To handle this efficiently OrdinaryDiffEqOperatorSplitting.jl provides a small set of utils.
 
 ```@docs
 OrdinaryDiffEqOperatorSplitting.NoExternalSynchronization
@@ -30,7 +30,7 @@ with your custom synchronizer object and add it to the split function constructi
 ```julia
 f1, f2 = generate_individual_functions() # assuming 3 unknowns each
 i1, i2 = generate_solution_indices()     # e.g. ([1,2,3], Int[])
-synchronizer_tree = generate_my_synchronizer_tree() # e.g. (MySyncronizer([1,2,3]), NoExternalSynchronization())
+synchronizer_tree = generate_my_synchronizer_tree() # e.g. (MySynchronizer([1,2,3]), NoExternalSynchronization())
 f = GenericSplitFunction((f1, f2), (i1, i2), synchronizer_tree)
 u0 = [-1.0, 1.0, 0.0]
 tspan = (0.0, 1.0)

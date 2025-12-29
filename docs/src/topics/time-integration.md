@@ -9,7 +9,7 @@ suboperators $F_i$. This can be formally written as
 d_t u(t) = F(u(t), p, t) = F_1(u(t), p, t) + ... + F_N(u(t), p, t) \, .
 ```
 
-We call $t$ time the $u(t)$ the *state* of the system. This way we can
+We call $t$ time and $u(t)$ the *state* of the system. This way we can
 define subproblems
 
 ```math
@@ -44,16 +44,16 @@ Such that we obtain the approximation $u(t_1) \approx u^{N-1}(t_1)$. The
 approximation is first order in time, as we will show in the next section.
 
 Probably the most widely spread application for operator splitting schemes is
-the solution forreaction diffusion systems. These have the form
+the solution of reaction diffusion systems. These have the form
 
 ```math
 d_t u(t) = Lu + R(u)
 ```
 
-where $L$ is some linear operator, usually coming from the linaerization of
-diffusion opeartors and a nonlinear reaction part $R$ which has some interesting
-locality properties. This locallity property usually tells us that the time
-evolution of $R$ natually decouples into many small blocks. This way we only
+where $L$ is some linear operator, usually coming from the linearization of
+diffusion operators and a nonlinear reaction part $R$ which has some interesting
+locality properties. This locality property usually tells us that the time
+evolution of $R$ naturally decouples into many small blocks. This way we only
 have to solve for the time evolution of a linear problem $d_t u(t) = Lu$ and a
 set of many very small nonlinear problems $d_t u(t) = R(u)$.
 
@@ -119,6 +119,6 @@ which implies stability of the scheme.
 ## References
 
 ```@bibliography
-Pages = ["topics/time-integration.md"]
+Pages = ["time-integration.md"]
 Canonical = false
 ```
