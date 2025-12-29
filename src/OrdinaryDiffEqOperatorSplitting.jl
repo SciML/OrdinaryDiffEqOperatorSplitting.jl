@@ -6,17 +6,20 @@ timeit_debug_enabled() = false
 import Unrolled: @unroll
 
 import SciMLBase, DiffEqBase, DataStructures
+import SciMLBase: ReturnCode
+import SciMLBase: DEIntegrator, NullParameters, isadaptive
+
+import RecursiveArrayTools
 
 import OrdinaryDiffEqCore
 
 import UnPack: @unpack
-import DiffEqBase: init, TimeChoiceIterator
 
-abstract type AbstractOperatorSplitFunction <: DiffEqBase.AbstractODEFunction{true} end
+abstract type AbstractOperatorSplitFunction <: SciMLBase.AbstractODEFunction{true} end
 abstract type AbstractOperatorSplittingAlgorithm end
 abstract type AbstractOperatorSplittingCache end
 
-@inline DiffEqBase.isadaptive(::AbstractOperatorSplittingAlgorithm) = false
+@inline SciMLBase.isadaptive(::AbstractOperatorSplittingAlgorithm) = false
 
 include("function.jl")
 include("problem.jl")
