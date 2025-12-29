@@ -68,7 +68,7 @@ f2 = ODEFunction(ode2)
     fsplit2_outer = GenericSplitFunction((f1, fsplit2_inner), (f1dofs, f2dofs))
 
     prob2 = OperatorSplittingProblem(fsplit2_outer, u0, tspan)
-    for TimeStepperType in (LieTrotterGodunov,)
+    for TimeStepperType in (LieTrotterGodunov, StrangMarchuk)
         @testset "Solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
             (prob1, TimeStepperType((Euler(), Euler()))),
             (prob1, TimeStepperType((Tsit5(), Euler()))),
@@ -137,7 +137,7 @@ f2 = ODEFunction(ode2)
         fsplit_NaN = GenericSplitFunction((f1, f_NaN), (f1dofs, f_NaN_dofs))
         prob_NaN = OperatorSplittingProblem(fsplit_NaN, u0, tspan)
 
-        for TimeStepperType in (LieTrotterGodunov,)
+        for TimeStepperType in (LieTrotterGodunov, StrangMarchuk)
             @testset "Solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
                 (prob1, TimeStepperType((Euler(), Euler()))),
                 (prob1, TimeStepperType((Tsit5(), Euler()))),
