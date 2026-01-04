@@ -15,21 +15,23 @@ struct LieTrotterGodunovCache{uType, uprevType, iiType} <: AbstractOperatorSplit
     inner_caches::iiType
 end
 
-function init_cache(f::GenericSplitFunction, alg::LieTrotterGodunov;
+function init_cache(
+        f::GenericSplitFunction, alg::LieTrotterGodunov;
         uprev::AbstractArray, u::AbstractVector,
         inner_caches,
         alias_uprev = true,
         alias_u = false
-)
+    )
     _uprev = alias_uprev ? uprev : RecursiveArrayTools.recursivecopy(uprev)
     _u = alias_u ? u : RecursiveArrayTools.recursivecopy(u)
-    LieTrotterGodunovCache(_u, _uprev, inner_caches)
+    return LieTrotterGodunovCache(_u, _uprev, inner_caches)
 end
 
 @inline @unroll function advance_solution_to!(
         outer_integrator::OperatorSplittingIntegrator,
         subintegrators::Tuple, solution_indices::Tuple,
-        synchronizers::Tuple, cache::LieTrotterGodunovCache, tnext)
+        synchronizers::Tuple, cache::LieTrotterGodunovCache, tnext
+    )
     # We assume that the integrators are already synced
     @unpack inner_caches = cache
     # For each inner operator
@@ -42,10 +44,11 @@ end
 
         @timeit_debug "sync ->" forward_sync_subintegrator!(outer_integrator, subinteg, idxs, synchronizer)
         @timeit_debug "time solve" advance_solution_to!(
-            outer_integrator, subinteg, idxs, synchronizer, cache, tnext)
+            outer_integrator, subinteg, idxs, synchronizer, cache, tnext
+        )
         if !(subinteg isa Tuple) &&
-           subinteg.sol.retcode ∉
-           (ReturnCode.Default, ReturnCode.Success)
+                subinteg.sol.retcode ∉
+                (ReturnCode.Default, ReturnCode.Success)
             return
         end
         backward_sync_subintegrator!(outer_integrator, subinteg, idxs, synchronizer)

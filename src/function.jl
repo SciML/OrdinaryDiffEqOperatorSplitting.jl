@@ -5,7 +5,7 @@
 This type of function describes a set of connected inner functions in mass-matrix form, as usually found in operator splitting procedures.
 """
 struct GenericSplitFunction{fSetType <: Tuple, idxSetType <: Tuple, sSetType <: Tuple} <:
-       AbstractOperatorSplitFunction
+    AbstractOperatorSplitFunction
     # Tuple containing the atomic ode functions or further nested split functions.
     functions::fSetType
     # The ranges for the values in the solution vector.
@@ -14,7 +14,7 @@ struct GenericSplitFunction{fSetType <: Tuple, idxSetType <: Tuple, sSetType <: 
     synchronizers::sSetType
     function GenericSplitFunction(fs::Tuple, drs::Tuple, syncers::Tuple)
         @assert length(fs) == length(drs) == length(syncers)
-        new{typeof(fs), typeof(drs), typeof(syncers)}(fs, drs, syncers)
+        return new{typeof(fs), typeof(drs), typeof(syncers)}(fs, drs, syncers)
     end
 end
 
@@ -28,7 +28,7 @@ Indicator that no synchronization between parameters and solution vectors is nec
 struct NoExternalSynchronization end
 
 function GenericSplitFunction(fs::Tuple, drs::Tuple)
-    GenericSplitFunction(fs, drs, ntuple(_->NoExternalSynchronization(), length(fs)))
+    return GenericSplitFunction(fs, drs, ntuple(_ -> NoExternalSynchronization(), length(fs)))
 end
 
 @inline get_operator(f::GenericSplitFunction, i::Integer) = f.functions[i]

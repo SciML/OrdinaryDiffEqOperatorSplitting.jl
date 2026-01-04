@@ -10,40 +10,46 @@ using ModelingToolkit
 
 # Reference
 tspan = (0.0, 100.0)
-u0 = [0.7611944793397108
-      0.9059606424982555
-      0.5755174199139956]
-trueA = [-0.1 0.0 -0.0;
-         0.0 -0.1 0.0;
-         -0.0 0.0 -0.1]
-trueB = [-0.0 0.0 -0.01;
-         0.0 -0.0 0.0;
-         -0.01 0.0 -0.0]
+u0 = [
+    0.7611944793397108
+    0.9059606424982555
+    0.5755174199139956
+]
+trueA = [
+    -0.1 0.0 -0.0;
+    0.0 -0.1 0.0;
+    -0.0 0.0 -0.1
+]
+trueB = [
+    -0.0 0.0 -0.01;
+    0.0 -0.0 0.0;
+    -0.01 0.0 -0.0
+]
 function ode_true(du, u, p, t)
     du .= -0.1u
     du[1] -= 0.01u[3]
-    du[3] -= 0.01u[1]
+    return du[3] -= 0.01u[1]
 end
 trueu = exp((tspan[2] - tspan[1]) * (trueA + trueB)) * u0
 
 # Setup individual functions
 # Diagonal components
 function ode1(du, u, p, t)
-    @. du = -0.1u
+    return @. du = -0.1u
 end
 f1 = ODEFunction(ode1)
 
 # Off-diagonal components
 function ode2(du, u, p, t)
     du[1] = -0.01u[2]
-    du[2] = -0.01u[1]
+    return du[2] = -0.01u[1]
 end
 f2 = ODEFunction(ode2)
 
 # Now some recursive splitting
 function ode3(du, u, p, t)
     du[1] = -0.005u[2]
-    du[2] = -0.005u[1]
+    return du[2] = -0.005u[1]
 end
 f3 = ODEFunction(ode3)
 # The time stepper carries the individual solver information.
@@ -61,7 +67,7 @@ Dt = Differential(time)
     end
 end
 @named testmodel2 = TestModelODE2()
-testsys2 = mtkcompile(testmodel2; sort_eqs=false)
+testsys2 = mtkcompile(testmodel2; sort_eqs = false)
 
 # Test whether adaptive code path works in principle
 struct FakeAdaptiveAlgorithm{T} <: OS.AbstractOperatorSplittingAlgorithm
@@ -85,13 +91,13 @@ end
     return nothing # Do nothing
 end
 function OS.build_subintegrator_tree_with_cache(
-    prob::OS.OperatorSplittingProblem, alg::FakeAdaptiveAlgorithm,
-    uprevouter::AbstractVector, uouter::AbstractVector,
-    solution_indices,
-    t0, dt, tf,
-    tstops, saveat, d_discontinuities, callback,
-    adaptive, verbose,
-)
+        prob::OS.OperatorSplittingProblem, alg::FakeAdaptiveAlgorithm,
+        uprevouter::AbstractVector, uouter::AbstractVector,
+        solution_indices,
+        t0, dt, tf,
+        tstops, saveat, d_discontinuities, callback,
+        adaptive, verbose,
+    )
     subintegrators, inner_cache = OS.build_subintegrator_tree_with_cache(
         prob, alg.alg, uprevouter, uouter, solution_indices,
         t0, dt, tf,
@@ -100,20 +106,20 @@ function OS.build_subintegrator_tree_with_cache(
     )
 
     return subintegrators, FakeAdaptiveAlgorithmCache(
-        inner_cache,
-    )
+            inner_cache,
+        )
 end
 function OS.build_subintegrator_tree_with_cache(
-    prob::OS.OperatorSplittingProblem, alg::FakeAdaptiveAlgorithm,
-    f::GenericSplitFunction, p::Tuple,
-    uprevouter::AbstractVector, uouter::AbstractVector,
-    solution_indices,
-    t0, dt, tf,
-    tstops, saveat, d_discontinuities, callback,
-    adaptive, verbose,
-    save_end = false,
-    controller = nothing
-)
+        prob::OS.OperatorSplittingProblem, alg::FakeAdaptiveAlgorithm,
+        f::GenericSplitFunction, p::Tuple,
+        uprevouter::AbstractVector, uouter::AbstractVector,
+        solution_indices,
+        t0, dt, tf,
+        tstops, saveat, d_discontinuities, callback,
+        adaptive, verbose,
+        save_end = false,
+        controller = nothing
+    )
     subintegrators, inner_cache = OS.build_subintegrator_tree_with_cache(
         prob, alg.alg, f, p, uprevouter, uouter, solution_indices,
         t0, dt, tf,
@@ -122,14 +128,14 @@ function OS.build_subintegrator_tree_with_cache(
     )
 
     return subintegrators, FakeAdaptiveAlgorithmCache(
-        inner_cache,
-    )
+            inner_cache,
+        )
 end
 FakeAdaptiveLTG(inner) = FakeAdaptiveAlgorithm(LieTrotterGodunov(inner))
 
 @inline DiffEqBase.get_tmp_cache(integrator::OS.OperatorSplittingIntegrator, alg::OS.AbstractOperatorSplittingAlgorithm, cache::FakeAdaptiveAlgorithmCache) = DiffEqBase.get_tmp_cache(integrator, alg, cache.cache)
 @inline function OS.advance_solution_to!(outer_integrator::OS.OperatorSplittingIntegrator, subintegrators::Tuple, solution_indices::Tuple, synchronizers::Tuple, cache::FakeAdaptiveAlgorithmCache, tnext)
-    OS.advance_solution_to!(outer_integrator, subintegrators, solution_indices, synchronizers, cache.cache, tnext)
+    return OS.advance_solution_to!(outer_integrator, subintegrators, solution_indices, synchronizers, cache.cache, tnext)
 end
 
 @testset "reinit and convergence" begin
@@ -158,56 +164,57 @@ end
     prob2 = OperatorSplittingProblem(fsplit2_outer, u0, tspan)
     for TimeStepperType in (LieTrotterGodunov, FakeAdaptiveLTG)
         @testset "Solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
-            (prob1a, TimeStepperType((Euler(), Euler()))),
-            (prob1a, TimeStepperType((Tsit5(), Euler()))),
-            (prob1a, TimeStepperType((Euler(), Tsit5()))),
-            (prob1a, TimeStepperType((Tsit5(), Tsit5()))),
-            (prob1b, TimeStepperType((Euler(), Euler()))),
-            (prob1b, TimeStepperType((Tsit5(), Euler()))),
-            (prob1b, TimeStepperType((Euler(), Tsit5()))),
-            (prob1b, TimeStepperType((Tsit5(), Tsit5()))),
-            (prob2, TimeStepperType((Euler(), TimeStepperType((Euler(), Euler()))))),
-            (prob2, TimeStepperType((Euler(), TimeStepperType((Tsit5(), Euler()))))),
-            (prob2, TimeStepperType((Euler(), TimeStepperType((Euler(), Tsit5()))))),
-            (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Euler()))))),
-            (prob2, TimeStepperType((Tsit5(), TimeStepperType((Euler(), Tsit5()))))),
-            (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Tsit5())))))
-        )
+                (prob1a, TimeStepperType((Euler(), Euler()))),
+                (prob1a, TimeStepperType((Tsit5(), Euler()))),
+                (prob1a, TimeStepperType((Euler(), Tsit5()))),
+                (prob1a, TimeStepperType((Tsit5(), Tsit5()))),
+                (prob1b, TimeStepperType((Euler(), Euler()))),
+                (prob1b, TimeStepperType((Tsit5(), Euler()))),
+                (prob1b, TimeStepperType((Euler(), Tsit5()))),
+                (prob1b, TimeStepperType((Tsit5(), Tsit5()))),
+                (prob2, TimeStepperType((Euler(), TimeStepperType((Euler(), Euler()))))),
+                (prob2, TimeStepperType((Euler(), TimeStepperType((Tsit5(), Euler()))))),
+                (prob2, TimeStepperType((Euler(), TimeStepperType((Euler(), Tsit5()))))),
+                (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Euler()))))),
+                (prob2, TimeStepperType((Tsit5(), TimeStepperType((Euler(), Tsit5()))))),
+                (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Tsit5()))))),
+            )
             # The remaining code works as usual.
             integrator = DiffEqBase.init(
-                prob, tstepper, dt = dt, verbose = true, alias_u0 = false, adaptive=false)
+                prob, tstepper, dt = dt, verbose = true, alias_u0 = false, adaptive = false
+            )
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
             ufinal = copy(integrator.u)
-            @test isapprox(ufinal, trueu, atol = 1e-6)
+            @test isapprox(ufinal, trueu, atol = 1.0e-6)
             @test integrator.t ≈ tspan[2]
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
+            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
             end
-            @test isapprox(ufinal, integrator.u, atol = 1e-12)
+            @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
+            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
             end
-            @test isapprox(ufinal, integrator.u, atol = 1e-12)
+            @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
+            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -216,51 +223,52 @@ end
             @test integrator.t ≈ tspan[2]
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
+            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
         end
     end
 
     for TimeStepperType in (FakeAdaptiveLTG,)
         @testset "Adaptive solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
-            (prob1a, TimeStepperType((Tsit5(), Tsit5()))),
-            (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Tsit5())))))
-        )
+                (prob1a, TimeStepperType((Tsit5(), Tsit5()))),
+                (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Tsit5()))))),
+            )
             # The remaining code works as usual.
             integrator = DiffEqBase.init(
-                prob, tstepper, dt = dt, verbose = true, alias_u0 = false, adaptive=true)
+                prob, tstepper, dt = dt, verbose = true, alias_u0 = false, adaptive = true
+            )
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
             ufinal = copy(integrator.u)
-            @test isapprox(ufinal, trueu, atol = 1e-6)
+            @test isapprox(ufinal, trueu, atol = 1.0e-6)
             @test integrator.t ≈ tspan[2]
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
+            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
             end
-            @test isapprox(ufinal, integrator.u, atol = 1e-12)
+            @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
+            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
             end
-            @test isapprox(ufinal, integrator.u, atol = 1e-12)
+            @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
+            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -269,8 +277,8 @@ end
             @test integrator.t ≈ tspan[2]
             @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2]-tspan[1])/dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2]-tspan[1])/dt)
+            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
         end
     end
 
@@ -292,17 +300,18 @@ end
 
         for TimeStepperType in (LieTrotterGodunov,)
             @testset "Solver type $TimeStepperType | $tstepper" for tstepper in (
-                TimeStepperType((Euler(), Euler())),
-                TimeStepperType((Tsit5(), Euler())),
-                TimeStepperType((Euler(), Tsit5())),
-                TimeStepperType((Tsit5(), Tsit5()))
-            )
+                    TimeStepperType((Euler(), Euler())),
+                    TimeStepperType((Tsit5(), Euler())),
+                    TimeStepperType((Euler(), Tsit5())),
+                    TimeStepperType((Tsit5(), Tsit5())),
+                )
                 integrator_NaN = DiffEqBase.init(
-                    prob_NaN, tstepper, dt = dt, verbose = true, alias_u0 = false)
+                    prob_NaN, tstepper, dt = dt, verbose = true, alias_u0 = false
+                )
                 @test integrator_NaN.sol.retcode == DiffEqBase.ReturnCode.Default
                 DiffEqBase.solve!(integrator_NaN)
                 @test integrator_NaN.sol.retcode ∈
-                      (DiffEqBase.ReturnCode.Unstable, DiffEqBase.ReturnCode.DtNaN)
+                    (DiffEqBase.ReturnCode.Unstable, DiffEqBase.ReturnCode.DtNaN)
             end
         end
     end

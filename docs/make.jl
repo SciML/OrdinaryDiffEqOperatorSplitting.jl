@@ -1,8 +1,10 @@
 using OrdinaryDiffEqOperatorSplitting
 using Documenter, DocumenterCitations
 
-DocMeta.setdocmeta!(OrdinaryDiffEqOperatorSplitting, :DocTestSetup,
-    :(using OrdinaryDiffEqOperatorSplitting); recursive = true)
+DocMeta.setdocmeta!(
+    OrdinaryDiffEqOperatorSplitting, :DocTestSetup,
+    :(using OrdinaryDiffEqOperatorSplitting); recursive = true
+)
 
 const is_ci = haskey(ENV, "GITHUB_ACTIONS")
 
@@ -16,7 +18,7 @@ makedocs(
     format = Documenter.HTML(
         assets = [
             "assets/citations.css",
-        # "assets/favicon.ico"
+            # "assets/favicon.ico"
         ],
         # canonical = "https://localhost/",
         collapselevel = 1
@@ -31,7 +33,7 @@ makedocs(
         "Theory Manual" => "topics/time-integration.md",
         "api-reference/index.md",
         "devdocs/index.md",
-        "references.md"
+        "references.md",
     ],
     plugins = [
         bibtex_plugin,
@@ -45,6 +47,6 @@ deploydocs(
     devbranch = "main",
     versions = [
         "stable" => "v^",
-        "dev" => "dev"
+        "dev" => "dev",
     ]
 )
