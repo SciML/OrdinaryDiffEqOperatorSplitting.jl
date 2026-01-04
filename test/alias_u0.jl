@@ -4,14 +4,14 @@ using DiffEqBase
 using OrdinaryDiffEqLowOrderRK
 
 function ode1(du, u, p, t)
-    @. du = -0.1u
+    return @. du = -0.1u
 end
 f1 = ODEFunction(ode1)
 f1dofs = [1, 2, 3]
 
 function ode2(du, u, p, t)
     du[1] = -0.01u[2]
-    du[2] = -0.01u[1]
+    return du[2] = -0.01u[1]
 end
 f2 = ODEFunction(ode2)
 f2dofs = [1, 3]
