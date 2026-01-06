@@ -675,7 +675,7 @@ end
 function synchronize_subintegrator!(
         subintegrator::DEIntegrator, integrator::OperatorSplittingIntegrator
     )
-    @unpack t, dt = integrator
+    (;t, dt_ = integrator
     @assert subintegrator.t == t
     return if !isadaptive(subintegrator)
         SciMLBase.set_proposed_dt!(subintegrator, dt)
