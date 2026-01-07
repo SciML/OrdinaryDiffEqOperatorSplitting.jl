@@ -27,4 +27,6 @@ include("utils.jl")
 
 export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov
 
+include("precompilation.jl")
+
 end

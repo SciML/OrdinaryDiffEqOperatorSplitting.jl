@@ -8,6 +8,8 @@ CommonSolve = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 DiffEqBase = "2b5f629d-d688-5b77-993f-72d75c75574e"
 OrdinaryDiffEqCore = "bbf590c4-e513-4bbe-9b18-05decba2e5d8"
+OrdinaryDiffEqLowOrderRK = "1344f307-1e59-4825-a18e-ace9aa3fa4c6"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 RecursiveArrayTools = "731186ca-8d62-57ce-b412-fbd966d074cd"
 SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
@@ -22,6 +24,7 @@ ModelingToolkit = "10"
 OrdinaryDiffEqCore = "1.19.0, 2"
 OrdinaryDiffEqLowOrderRK = "1.7"
 OrdinaryDiffEqTsit5 = "1.1.0"
+PrecompileTools = "1.0"
 RecursiveArrayTools = "3.39.0"
 SafeTestsets = "0.1.0"
 SciMLBase = "2.77.0"
@@ -32,10 +35,9 @@ julia = "1.10"
 [extras]
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
-OrdinaryDiffEqLowOrderRK = "1344f307-1e59-4825-a18e-ace9aa3fa4c6"
 OrdinaryDiffEqTsit5 = "b1df2697-797e-41e3-8120-5422d3b24e4a"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["ExplicitImports", "ModelingToolkit", "OrdinaryDiffEqLowOrderRK", "OrdinaryDiffEqTsit5", "SafeTestsets", "Test"]
+test = ["ExplicitImports", "ModelingToolkit", "OrdinaryDiffEqTsit5", "SafeTestsets", "Test"]
