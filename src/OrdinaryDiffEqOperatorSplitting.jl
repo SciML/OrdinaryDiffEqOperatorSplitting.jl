@@ -13,8 +13,6 @@ import RecursiveArrayTools
 
 import OrdinaryDiffEqCore
 
-import UnPack: @unpack
-
 abstract type AbstractOperatorSplitFunction <: SciMLBase.AbstractODEFunction{true} end
 abstract type AbstractOperatorSplittingAlgorithm end
 abstract type AbstractOperatorSplittingCache end

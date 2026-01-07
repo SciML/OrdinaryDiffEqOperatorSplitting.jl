@@ -77,7 +77,7 @@ end
         solution_indices::Tuple, synchronizers::Tuple,
         cache::MySimpleFirstOrderAlgorithmCache, tnext)
     # We assume that the integrators are already synced
-    @unpack inner_caches = cache
+    (;inner_caches) = cache
 
     # Advance first subproblem
     OrdinaryDiffEqOperatorSplitting.forward_sync_subintegrator!(

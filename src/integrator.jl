@@ -413,7 +413,7 @@ function DiffEqBase.solve!(integrator::OperatorSplittingIntegrator)
             step_header!(integrator)
             @timeit_debug "check_error" SciMLBase.check_error!(integrator) ∉ (
                 ReturnCode.Success, ReturnCode.Default,
-            )&&return
+            ) && return
             __step!(integrator)
             step_footer!(integrator)
             if !SciMLBase.has_tstop(integrator)
@@ -438,7 +438,7 @@ function DiffEqBase.step!(integrator::OperatorSplittingIntegrator)
             step_header!(integrator)
             @timeit_debug "check_error" SciMLBase.check_error!(integrator) ∉ (
                 ReturnCode.Success, ReturnCode.Default,
-            )&&return
+            ) && return
             __step!(integrator)
             step_footer!(integrator)
             if !SciMLBase.has_tstop(integrator)
@@ -449,14 +449,14 @@ function DiffEqBase.step!(integrator::OperatorSplittingIntegrator)
         step_header!(integrator)
         @timeit_debug "check_error" SciMLBase.check_error!(integrator) ∉ (
             ReturnCode.Success, ReturnCode.Default,
-        )&&return
+        ) && return
         __step!(integrator)
         step_footer!(integrator)
         while !should_accept_step(integrator)
             step_header!(integrator)
             @timeit_debug "check_error" SciMLBase.check_error!(integrator) ∉ (
                 ReturnCode.Success, ReturnCode.Default,
-            )&&return
+            ) && return
             __step!(integrator)
             step_footer!(integrator)
         end
@@ -508,7 +508,7 @@ function DiffEqBase.step!(integrator::OperatorSplittingIntegrator, dt, stop_at_t
             step_header!(integrator)
             @timeit_debug "check_error" SciMLBase.check_error!(integrator) ∉ (
                 ReturnCode.Success, ReturnCode.Default,
-            )&&return
+            ) && return
             __step!(integrator)
             step_footer!(integrator)
         end
@@ -675,7 +675,7 @@ end
 function synchronize_subintegrator!(
         subintegrator::DEIntegrator, integrator::OperatorSplittingIntegrator
     )
-    @unpack t, dt = integrator
+    (; t, dt) = integrator
     @assert subintegrator.t == t
     return if !isadaptive(subintegrator)
         SciMLBase.set_proposed_dt!(subintegrator, dt)
