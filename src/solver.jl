@@ -33,7 +33,7 @@ end
         synchronizers::Tuple, cache::LieTrotterGodunovCache, tnext
     )
     # We assume that the integrators are already synced
-    (;inner_caches) = cache
+    (; inner_caches) = cache
     # For each inner operator
     i = 0
     @unroll for subinteg in subintegrators
