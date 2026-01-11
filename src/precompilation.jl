@@ -1,13 +1,13 @@
-using PrecompileTools
+using PrecompileTools: @compile_workload
 using OrdinaryDiffEqLowOrderRK: Euler
 
 function _precompile_ode1(du, u, p, t)
-    @. du = -0.1u
+    return @. du = -0.1u
 end
 
 function _precompile_ode2(du, u, p, t)
     du[1] = -0.01u[2]
-    du[2] = -0.01u[1]
+    return du[2] = -0.01u[1]
 end
 
 @compile_workload begin
