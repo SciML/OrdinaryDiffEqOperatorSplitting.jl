@@ -245,6 +245,47 @@ function subreinit!(
     return DiffEqBase.reinit!(subintegrator, u0[solution_indices]; kwargs...)
 end
 
+# subreinit! for enhanced cache (subintegrator)
+function subreinit!(
+        f,
+        u0,
+        solution_indices,
+        cache::AbstractOperatorSplittingCache;
+        t0 = nothing,
+        dt = nothing,
+        kwargs...
+    )
+    # Update cache state
+    @views u_sub = u0[solution_indices]
+    cache.u .= u_sub
+    cache.uprev .= u_sub
+    
+    if t0 !== nothing
+        cache.t = t0
+        cache.tprev = t0
+    end
+    
+    if dt !== nothing
+        cache.dt = dt
+        cache.dtcache = dt
+    end
+    
+    cache.iter = 0
+    cache.sol.retcode = ReturnCode.Default
+    
+    # Recursively reinit subintegrators
+    if cache isa LieTrotterGodunovCache && cache.subintegrator_tree isa Tuple
+        # Use manual iteration instead of @unroll for this nested call
+        i = 1
+        for subintegrator in cache.subintegrator_tree
+            subreinit!(get_operator(f, i), u0, cache.solution_index_tree[i], subintegrator; t0, dt, kwargs...)
+            i += 1
+        end
+    end
+    
+    return nothing
+end
+
 @unroll function subreinit!(
         f,
         u0,
@@ -496,6 +537,22 @@ function check_error_subintegrators(integrator, subintegrator::DEIntegrator)
     return SciMLBase.check_error(subintegrator)
 end
 
+# check_error for enhanced cache (subintegrator)
+function check_error_subintegrators(integrator, cache::AbstractOperatorSplittingCache)
+    # Check the cache's own retcode
+    if !SciMLBase.successful_retcode(cache.sol.retcode) &&
+            cache.sol.retcode != ReturnCode.Default
+        return cache.sol.retcode
+    end
+    
+    # Recursively check subintegrators if cache has them
+    if cache isa LieTrotterGodunovCache
+        return check_error_subintegrators(integrator, cache.subintegrator_tree)
+    end
+    
+    return cache.sol.retcode
+end
+
 function DiffEqBase.step!(integrator::OperatorSplittingIntegrator, dt, stop_at_tdt = false)
     return @timeit_debug "step!" begin
         # OridinaryDiffEq lets dt be negative if tdir is -1, but that's inconsistent
@@ -682,6 +739,18 @@ function synchronize_subintegrator!(
     end
 end
 
+# Synchronize enhanced cache (subintegrator)
+function synchronize_subintegrator!(
+        cache::AbstractOperatorSplittingCache, integrator::OperatorSplittingIntegrator
+    )
+    (; t, dt) = integrator
+    @assert cache.t == t
+    # Update dt if needed
+    cache.dtcache = dt
+    cache.dt = dt
+    return nothing
+end
+
 function advance_solution_to!(
         integrator::OperatorSplittingIntegrator,
         cache::AbstractOperatorSplittingCache, tnext::Number
@@ -759,16 +828,36 @@ function build_subintegrator_tree_with_cache(
 
     subintegrator_tree = first.(subintegrator_tree_with_caches)
     inner_caches = last.(subintegrator_tree_with_caches)
+    
+    # Build the trees for this level
+    solution_index_tree = ntuple(
+        i -> build_solution_index_tree_recursion(get_operator(f, i), f.solution_indices[i]),
+        length(f.functions)
+    )
+    synchronizer_tree = ntuple(
+        i -> build_synchronizer_tree_recursion(get_operator(f, i), f.synchronizers[i]),
+        length(f.functions)
+    )
 
     # TODO fix mixed device type problems we have to be smarter
     uprev = @view uprevouter[solution_indices]
     u = @view uouter[solution_indices]
-    return subintegrator_tree,
-        init_cache(
-            f, alg;
-            uprev = uprev, u = u,
-            inner_caches = inner_caches
-        )
+    
+    # Create the enhanced cache with all fields
+    cache = init_cache(
+        f, alg;
+        uprev = uprev, u = u,
+        inner_caches = inner_caches,
+        subintegrator_tree = subintegrator_tree,
+        solution_index_tree = solution_index_tree,
+        synchronizer_tree = synchronizer_tree,
+        t = t0,
+        dt = dt,
+        controller = controller
+    )
+    
+    # Return the cache as the subintegrator (not as a separate tuple element)
+    return cache, cache
 end
 
 function build_subintegrator_tree_with_cache(

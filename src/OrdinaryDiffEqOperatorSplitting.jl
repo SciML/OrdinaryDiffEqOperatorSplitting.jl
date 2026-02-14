@@ -26,6 +26,7 @@ include("solver.jl")
 include("utils.jl")
 
 export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov
+export OperatorSplittingMinimalSolution
 
 include("precompilation.jl")
 

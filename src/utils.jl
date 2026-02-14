@@ -63,6 +63,15 @@ function forward_sync_subintegrator!(
     return forward_sync_external!(outer_integrator, inner_integrator, sync)
 end
 
+# Forward sync for enhanced cache (subintegrator)
+function forward_sync_subintegrator!(
+        outer_integrator::OperatorSplittingIntegrator,
+        cache::AbstractOperatorSplittingCache, solution_indices, sync
+    )
+    forward_sync_internal!(outer_integrator, cache, solution_indices)
+    return forward_sync_external!(outer_integrator, cache, sync)
+end
+
 """
     backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
 
@@ -79,6 +88,15 @@ function backward_sync_subintegrator!(
     return backward_sync_external!(outer_integrator, inner_integrator, sync)
 end
 
+# Backward sync for enhanced cache (subintegrator)
+function backward_sync_subintegrator!(
+        outer_integrator::OperatorSplittingIntegrator,
+        cache::AbstractOperatorSplittingCache, solution_indices, sync
+    )
+    backward_sync_internal!(outer_integrator, cache, solution_indices)
+    return backward_sync_external!(outer_integrator, cache, sync)
+end
+
 # This is a bit tricky, because per default the operator splitting integrators share their solution vector. However, there is also the case
 # when part of the problem is on a different device (thing e.g. about operator A being on CPU and B being on GPU).
 # This case should be handled with special synchronizers.
@@ -93,6 +111,29 @@ function backward_sync_internal!(
         inner_integrator::OperatorSplittingIntegrator, solution_indices
     )
     return nothing
+end
+
+# Forward sync for enhanced cache (subintegrator)
+function forward_sync_internal!(
+        outer_integrator::OperatorSplittingIntegrator,
+        cache::AbstractOperatorSplittingCache, solution_indices
+    )
+    @views uouter = outer_integrator.u[solution_indices]
+    sync_vectors!(cache.uprev, uouter)
+    sync_vectors!(cache.u, uouter)
+    # Update time state
+    cache.t = outer_integrator.t
+    cache.dt = outer_integrator.dt
+    return nothing
+end
+
+# Backward sync for enhanced cache (subintegrator)
+function backward_sync_internal!(
+        outer_integrator::OperatorSplittingIntegrator,
+        cache::AbstractOperatorSplittingCache, solution_indices
+    )
+    @views uouter = outer_integrator.u[solution_indices]
+    return sync_vectors!(uouter, cache.u)
 end
 
 function forward_sync_internal!(
@@ -127,6 +168,12 @@ function forward_sync_external!(
 end
 function forward_sync_external!(
         outer_integrator::OperatorSplittingIntegrator,
+        cache::AbstractOperatorSplittingCache, sync::NoExternalSynchronization
+    )
+    return nothing
+end
+function forward_sync_external!(
+        outer_integrator::OperatorSplittingIntegrator,
         inner_integrator::DEIntegrator, sync
     )
     return synchronize_solution_with_parameters!(outer_integrator, inner_integrator.p, sync)
@@ -141,6 +188,12 @@ end
 function backward_sync_external!(
         outer_integrator::OperatorSplittingIntegrator,
         inner_integrator::DEIntegrator, sync::NoExternalSynchronization
+    )
+    return nothing
+end
+function backward_sync_external!(
+        outer_integrator::OperatorSplittingIntegrator,
+        cache::AbstractOperatorSplittingCache, sync::NoExternalSynchronization
     )
     return nothing
 end
