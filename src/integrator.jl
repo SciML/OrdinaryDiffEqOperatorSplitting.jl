@@ -856,7 +856,10 @@ function build_subintegrator_tree_with_cache(
         controller = controller
     )
     
-    # Return the cache as the subintegrator (not as a separate tuple element)
+    # Return (subintegrator, cache) tuple where both are the same enhanced cache.
+    # The first element is used as the subintegrator in the tree (the cache acts as a subintegrator),
+    # and the second element is the cache that will be stored in init_cache's inner_caches.
+    # This maintains the expected return signature while allowing the cache to function as a subintegrator.
     return cache, cache
 end
 

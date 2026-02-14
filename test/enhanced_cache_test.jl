@@ -5,17 +5,22 @@ using DiffEqBase: ODEFunction, ODEProblem, solve
 using SciMLBase: NullParameters, init, ReturnCode
 using Test
 
+# Test constants
+const DECAY_RATE_1 = 0.1
+const DECAY_RATE_2 = 0.01
+const DECAY_RATE_3 = 0.005
+
 @testset "Enhanced Cache Tests" begin
     # Test 1: Basic cache structure
     @testset "Cache has required fields" begin
         function ode1(du, u, p, t)
-            @. du = -0.1u
+            @. du = -DECAY_RATE_1 * u
         end
         f1 = ODEFunction(ode1)
 
         function ode2(du, u, p, t)
-            du[1] = -0.01u[2]
-            du[2] = -0.01u[1]
+            du[1] = -DECAY_RATE_2 * u[2]
+            du[2] = -DECAY_RATE_2 * u[1]
         end
         f2 = ODEFunction(ode2)
 
@@ -57,17 +62,17 @@ using Test
     # Test 2: Nested splitting with enhanced cache as subintegrator
     @testset "Nested splitting structure" begin
         function ode1(du, u, p, t)
-            du[1] = -0.1u[1]
+            du[1] = -DECAY_RATE_1 * u[1]
         end
         f1 = ODEFunction(ode1)
 
         function ode2(du, u, p, t)
-            du[1] = -0.01u[1]
+            du[1] = -DECAY_RATE_2 * u[1]
         end
         f2 = ODEFunction(ode2)
 
         function ode3(du, u, p, t)
-            du[1] = -0.005u[1]
+            du[1] = -DECAY_RATE_3 * u[1]
         end
         f3 = ODEFunction(ode3)
 
@@ -96,14 +101,14 @@ using Test
     # Test 3: Basic solve works
     @testset "Basic solve" begin
         function ode1(du, u, p, t)
-            du[1] = -0.1*u[1]
-            du[2] = -0.1*u[2]
+            du[1] = -DECAY_RATE_1 * u[1]
+            du[2] = -DECAY_RATE_1 * u[2]
         end
         f1 = ODEFunction(ode1)
 
         function ode2(du, u, p, t)
-            du[1] = -0.01*u[2]
-            du[2] = -0.01*u[1]
+            du[1] = -DECAY_RATE_2 * u[2]
+            du[2] = -DECAY_RATE_2 * u[1]
         end
         f2 = ODEFunction(ode2)
 

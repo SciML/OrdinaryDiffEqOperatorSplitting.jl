@@ -108,14 +108,15 @@ end
         )
         
         # Check return code and propagate failure
-        if !(subinteg isa Tuple)
-            # For single integrator
+        # Check for enhanced cache first, then DEIntegrator
+        if subinteg isa AbstractOperatorSplittingCache
+            # For enhanced cache acting as subintegrator
             if subinteg.sol.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
                 cache.sol.retcode = subinteg.sol.retcode
                 return
             end
-        elseif subinteg isa AbstractOperatorSplittingCache
-            # For enhanced cache acting as subintegrator
+        elseif !(subinteg isa Tuple)
+            # For single DEIntegrator
             if subinteg.sol.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
                 cache.sol.retcode = subinteg.sol.retcode
                 return
