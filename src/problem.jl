@@ -35,6 +35,9 @@ recursive_null_parameters(f::AbstractOperatorSplitFunction) = @error "Not implem
 function recursive_null_parameters(f::GenericSplitFunction)
     return ntuple(i -> recursive_null_parameters(get_operator(f, i)), length(f.functions))
 end
-function recursive_null_parameters(f::SciMLBase.AbstractDiffEqFunction) # Wildcard for leafs
+function recursive_null_parameters(f::SciMLBase.AbstractDiffEqFunction)
+    return NullParameters()
+end
+function recursive_null_parameters(f)
     return NullParameters()
 end
