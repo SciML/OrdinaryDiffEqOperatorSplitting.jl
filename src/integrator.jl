@@ -51,6 +51,7 @@ its children's synchronizers, solution indices, and sub-integrators.  It does
 - `u_master`               — reference to the full master solution vector of the
                               outermost `OperatorSplittingIntegrator` (needed for sync)
 - `t`, `dt`, `dtcache`     — time tracking
+  `dtchangeable`, `stops`
 - `iter`                   — step counter at this level
 - `EEst`                   — error estimate (`NaN` for non-adaptive, `1.0` default
                               for adaptive)
@@ -70,6 +71,7 @@ mutable struct SplitSubIntegrator{
         algType,
         uType,
         tType,
+        tstopsType,
         EEstType,
         controllerType,
         cacheType,
@@ -88,6 +90,7 @@ mutable struct SplitSubIntegrator{
     dt::tType
     dtcache::tType
     const dtchangeable::Bool
+    tstops::tstopsType
     iter::Int
     EEst::EEstType
     controller::controllerType
@@ -102,13 +105,14 @@ mutable struct SplitSubIntegrator{
     child_solution_indices::childSolidxType # Tuple
     child_synchronizers::childSyncType      # Tuple
     opts::optionsType
+    tdir::tType
 end
 
 # --- SplitSubIntegrator interface ---
 
 tdir(integrator::SplitSubIntegrator) = sign(integrator.dt)
 
-@inline SciMLBase.has_tstop(::SplitSubIntegrator) = false
+@inline SciMLBase.has_tstop(::SplitSubIntegrator) = true
 @inline SciMLBase.isadaptive(sub::SplitSubIntegrator) = isadaptive(sub.alg)
 
 # proposed-dt interface (mirrors ODEIntegrator)
@@ -409,7 +413,7 @@ end
 # ---------------------------------------------------------------------------
 # handle_tstop!
 # ---------------------------------------------------------------------------
-function OrdinaryDiffEqCore.handle_tstop!(integrator::OperatorSplittingIntegrator)
+function OrdinaryDiffEqCore.handle_tstop!(integrator::AnySplitIntegrator)
     if SciMLBase.has_tstop(integrator)
         tdir_t    = tdir(integrator) * integrator.t
         tdir_tstop = SciMLBase.first_tstop(integrator)
@@ -548,14 +552,12 @@ function fix_solution_buffer_sizes!(integrator, sol)
     return nothing
 end
 
-function OrdinaryDiffEqCore.fixed_t_for_floatingpoint_error!(integrator::OperatorSplittingIntegrator, ttmp)
+function OrdinaryDiffEqCore.fixed_t_for_floatingpoint_error!(integrator::AnySplitIntegrator, ttmp)
     return if DiffEqBase.has_tstop(integrator)
         tstop = integrator.tdir * DiffEqBase.first_tstop(integrator)
         if abs(ttmp - tstop) <
                 100eps(float(max(integrator.t, tstop) / oneunit(integrator.t))) *
                 oneunit(integrator.t)
-            # We have to update the floating point errors of the subintegrator nodes, because
-            # they do not have the tstop logic.
             try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop)
             tstop
         else
@@ -638,7 +640,7 @@ function DiffEqBase.solve!(integrator::OperatorSplittingIntegrator)
     )
 end
 
-function DiffEqBase.step!(integrator::OperatorSplittingIntegrator)
+function DiffEqBase.step!(integrator::AnySplitIntegrator)
     @timeit_debug "step!" if integrator.advance_to_tstop
         tstop = SciMLBase.first_tstop(integrator)
         while !reached_tstop(integrator, tstop)
@@ -670,7 +672,7 @@ function DiffEqBase.step!(integrator::OperatorSplittingIntegrator)
     return
 end
 
-function DiffEqBase.step!(integrator::OperatorSplittingIntegrator, dt, stop_at_tdt = false)
+function DiffEqBase.step!(integrator::AnySplitIntegrator, dt, stop_at_tdt = false)
     @timeit_debug "step!" begin
         dt <= zero(dt) && error("dt must be positive")
         stop_at_tdt && !integrator.dtchangeable &&
@@ -687,24 +689,6 @@ function DiffEqBase.step!(integrator::OperatorSplittingIntegrator, dt, stop_at_t
         end
     end
     OrdinaryDiffEqCore.handle_tstop!(integrator)
-    return nothing
-end
-
-function DiffEqBase.step!(integrator::SplitSubIntegrator, dt, stop_at_tdt = false)
-    @timeit_debug "step!" begin
-        dt <= zero(dt) && error("dt must be positive")
-        stop_at_tdt && !integrator.dtchangeable &&
-            error("Cannot stop at t + dt if dtchangeable is false")
-        tnext = integrator.t + tdir(integrator) * dt
-        while !reached_tstop(integrator, tnext, stop_at_tdt)
-            step_header!(integrator)
-            @timeit_debug "check_error" SciMLBase.check_error!(integrator) ∉ (
-                ReturnCode.Success, ReturnCode.Default,
-            ) && return
-            __step!(integrator)
-            step_footer!(integrator)
-        end
-    end
     return nothing
 end
 
@@ -1007,8 +991,12 @@ function _build_child(
     child_solution_indices  = ntuple(i -> f.solution_indices[i],    length(f.functions))
     child_synchronizers     = ntuple(i -> f.synchronizers[i],       length(f.functions))
 
-    u_sub    = @view uouter[solution_indices]
-    uprev_sub = @view uprevouter[solution_indices]
+    u_sub     = RecursiveArrayTools.recursivecopy(uouter[solution_indices])
+    uprev_sub = RecursiveArrayTools.recursivecopy(uprevouter[solution_indices])
+
+    tstops_internal = OrdinaryDiffEqCore.initialize_tstops(
+        tType, tstops, d_discontinuities, prob.tspan
+    )
 
     level_cache = init_cache(
         f, alg;
@@ -1020,13 +1008,12 @@ function _build_child(
 
     sub = SplitSubIntegrator(
         alg,
-        # u and uprev: independent copies so that rollback works even when
-        # u_sub is a view into a device-local buffer.
-        RecursiveArrayTools.recursivecopy(Array(u_sub)),
-        RecursiveArrayTools.recursivecopy(Array(u_sub)),
+        u_sub,
+        uprev_sub,
         u_master,
         t0, t0, dt, dt,     # t, tprev, dt, dtcache
         isdtchangeable(alg),
+        tstops_internal,
         0,              # iter
         EEst_val,
         controller,
@@ -1039,6 +1026,7 @@ function _build_child(
         child_solution_indices,
         child_synchronizers,
         IntegratorOptions(; verbose, adaptive),
+        one(tType),
     )
 
     return sub, level_cache
@@ -1082,19 +1070,19 @@ end
 # ---------------------------------------------------------------------------
 # SciMLBase API
 # ---------------------------------------------------------------------------
-SciMLBase.has_stats(::OperatorSplittingIntegrator) = true
+SciMLBase.has_stats(::AnySplitIntegrator) = true
 
-SciMLBase.has_tstop(i::OperatorSplittingIntegrator)    = !isempty(i.tstops)
-SciMLBase.first_tstop(i::OperatorSplittingIntegrator)  = first(i.tstops)
-SciMLBase.pop_tstop!(i::OperatorSplittingIntegrator)   = pop!(i.tstops)
+SciMLBase.has_tstop(i::AnySplitIntegrator)    = !isempty(i.tstops)
+SciMLBase.first_tstop(i::AnySplitIntegrator)  = first(i.tstops)
+SciMLBase.pop_tstop!(i::AnySplitIntegrator)   = pop!(i.tstops)
 
-DiffEqBase.get_dt(i::OperatorSplittingIntegrator) = i.dt
-function set_dt!(i::OperatorSplittingIntegrator, dt)
+DiffEqBase.get_dt(i::AnySplitIntegrator) = i.dt
+function set_dt!(i::AnySplitIntegrator, dt)
     dt <= zero(dt) && error("dt must be positive")
     return i.dt = dt
 end
 
-function DiffEqBase.add_tstop!(i::OperatorSplittingIntegrator, t)
+function DiffEqBase.add_tstop!(i::AnySplitIntegrator, t)
     is_past_t(i, t) &&
         error("Cannot add a tstop at $t because that is behind the current \
                integrator time $(i.t)")
@@ -1103,23 +1091,12 @@ function DiffEqBase.add_tstop!(i::OperatorSplittingIntegrator, t)
     return nothing
 end
 
-function DiffEqBase.add_tstop!(i::SplitSubIntegrator, t)
-    DiffEqBase.add_tstop!.(i.child_subintegrators, t)
-end
-
-function _add_tstop!(i::OperatorSplittingIntegrator, t)
-    is_past_t(i, t) &&
-        error("Cannot add a tstop at $t because that is behind the current \
-               integrator time $(i.t)")
-    _add_tstop!(i.child_subintegrators, t)
-    return push!(i.tstops, t)
-end
-
 function DiffEqBase.add_saveat!(i::OperatorSplittingIntegrator, t)
     is_past_t(i, t) &&
         error("Cannot add a saveat point at $t because that is behind the \
                current integrator time $(i.t)")
-    return push!(i.saveat, t)
+    push!(i.saveat, t)
+    return nothing
 end
 
-DiffEqBase.u_modified!(i::OperatorSplittingIntegrator, bool) = nothing
+DiffEqBase.u_modified!(i::AnySplitIntegrator, bool) = nothing
