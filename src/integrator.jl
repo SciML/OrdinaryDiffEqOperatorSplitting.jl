@@ -15,10 +15,95 @@ Base.@kwdef mutable struct IntegratorOptions{tType, fType, F3}
     isoutofdomain::F3 = DiffEqBase.ODE_DEFAULT_ISOUTOFDOMAIN
 end
 
+# ---------------------------------------------------------------------------
+# SplitSubIntegratorStatus
+# ---------------------------------------------------------------------------
+"""
+    SplitSubIntegratorStatus
+
+Minimal error-communication object carried by a [`SplitSubIntegrator`](@ref).
+It contains only the `retcode` so that failure can be propagated up the
+operator-splitting tree without carrying an actual solution vector.
+"""
+mutable struct SplitSubIntegratorStatus
+    retcode::ReturnCode.T
+end
+
+SplitSubIntegratorStatus() = SplitSubIntegratorStatus(ReturnCode.Default)
+
+# ---------------------------------------------------------------------------
+# SplitSubIntegrator
+# ---------------------------------------------------------------------------
+"""
+    SplitSubIntegrator
+
+An intermediate node in the operator-splitting subintegrator tree.  It is
+self-contained: it knows its own solution indices, its child synchronizers,
+and the child solution-index tree.  It does **not** carry an `f` field
+(operator information lives in the cache / algorithm).
+
+Fields
+------
+- `alg`                — the `AbstractOperatorSplittingAlgorithm` at this level
+- `u`                  — view into the *master* solution vector for this sub-problem
+- `uprev`              — copy of `u` at the start of a step (for rollback)
+- `u_master`           — reference to the full master solution vector of the
+                          outermost `OperatorSplittingIntegrator` (needed during sync)
+- `t`, `dt`, `dtcache` — time tracking
+- `iter`               — step counter
+- `EEst`               — error estimate (`NaN` for non-adaptive, `1.0` default for adaptive)
+- `controller`         — step-size controller (or `nothing` for non-adaptive)
+- `force_stepfail`     — flag set when a step must be re-tried
+- `last_step_failed`   — flag set after a failed step to detect double-failure
+- `status`             — [`SplitSubIntegratorStatus`](@ref) for retcode communication
+- `cache`              — `AbstractOperatorSplittingCache` for the algorithm at this level
+- `subintegrator_tree` — tuple of child integrators (`SplitSubIntegrator` or `DEIntegrator`)
+- `solution_indices`   — global indices (into master `u`) owned by this sub-integrator
+- `solution_index_tree`— per-child global solution indices
+- `synchronizer_tree`  — per-child synchronizer objects
+"""
+mutable struct SplitSubIntegrator{
+        algType,
+        uType,
+        tType,
+        EEstType,
+        controllerType,
+        cacheType,
+        subintTreeType,
+        solidxType,
+        solidxTreeType,
+        syncTreeType,
+    }
+    alg::algType
+    u::uType                  # view into master u for this sub-problem
+    uprev::uType              # local copy for rollback  (same element type, plain Array)
+    u_master::uType           # reference to the outermost master u
+    t::tType
+    dt::tType
+    dtcache::tType
+    iter::Int
+    EEst::EEstType
+    controller::controllerType
+    force_stepfail::Bool
+    last_step_failed::Bool
+    status::SplitSubIntegratorStatus
+    cache::cacheType
+    subintegrator_tree::subintTreeType   # Tuple
+    solution_indices::solidxType
+    solution_index_tree::solidxTreeType  # Tuple
+    synchronizer_tree::syncTreeType      # Tuple
+end
+
+# Convenience predicate
+@inline SciMLBase.isadaptive(sub::SplitSubIntegrator) = isadaptive(sub.alg)
+
+# ---------------------------------------------------------------------------
+# OperatorSplittingIntegrator
+# ---------------------------------------------------------------------------
 """
     OperatorSplittingIntegrator <: AbstractODEIntegrator
 
-A variant of [`ODEIntegrator`](https://github.com/SciML/OrdinaryDiffEq.jl/blob/6ec5a55bda26efae596bf99bea1a1d729636f412/src/integrators/type.jl#L77-L123) to perform opeartor splitting.
+A variant of [`ODEIntegrator`](https://github.com/SciML/OrdinaryDiffEq.jl/blob/6ec5a55bda26efae596bf99bea1a1d729636f412/src/integrators/type.jl#L77-L123) to perform operator splitting.
 
 Derived from https://github.com/CliMA/ClimaTimeSteppers.jl/blob/ef3023747606d2750e674d321413f80638136632/src/integrators.jl.
 """
@@ -35,26 +120,24 @@ mutable struct OperatorSplittingIntegrator{
         cacheType,
         solType,
         subintTreeType,
-        solidxTreeType,
-        syncTreeType,
         controllerType,
         optionsType,
     } <: SciMLBase.AbstractODEIntegrator{algType, true, uType, tType}
     const f::fType
     const alg::algType
-    u::uType # Master Solution
-    uprev::uType # Master Solution
-    tmp::uType # Interpolation buffer
+    u::uType                 # Master Solution
+    uprev::uType             # Master Solution
+    tmp::uType               # Interpolation buffer
     p::pType
-    t::tType # Current time
+    t::tType                 # Current time
     tprev::tType
-    dt::tType # This is the time step length which which we use during time marching
-    dtcache::tType # This is the proposed time step length
+    dt::tType                # Time step length used during time marching
+    dtcache::tType           # Proposed time step length
     const dtchangeable::Bool # Indicator whether dtcache can be changed
     tstops::heapType
-    _tstops::tstopsType # argument to __init used as default argument to reinit!
+    _tstops::tstopsType      # argument to __init used as default argument to reinit!
     saveat::heapType
-    _saveat::saveatType # argument to __init used as default argument to reinit!
+    _saveat::saveatType      # argument to __init used as default argument to reinit!
     callback::callbackType
     advance_to_tstop::Bool
     # TODO group these into some internal flag struct
@@ -65,9 +148,11 @@ mutable struct OperatorSplittingIntegrator{
     # DiffEqBase.initialize! and DiffEqBase.finalize!
     cache::cacheType
     sol::solType
+    # NOTE: solution_index_tree and synchronizer_tree have been moved into
+    # the SplitSubIntegrator nodes.  The flat subintegrator_tree here is a
+    # Tuple of SplitSubIntegrator (or DEIntegrator for the degenerate
+    # single-level case).
     subintegrator_tree::subintTreeType
-    solution_index_tree::solidxTreeType
-    synchronizer_tree::syncTreeType
     iter::Int
     controller::controllerType
     opts::optionsType
@@ -75,6 +160,9 @@ mutable struct OperatorSplittingIntegrator{
     tdir::tType
 end
 
+# ---------------------------------------------------------------------------
+# __init
+# ---------------------------------------------------------------------------
 # called by DiffEqBase.init and DiffEqBase.solve
 function SciMLBase.__init(
         prob::OperatorSplittingProblem,
@@ -131,10 +219,13 @@ function SciMLBase.__init(
 
     callback = DiffEqBase.CallbackSet(callback)
 
-    subintegrator_tree,
-        cache = build_subintegrator_tree_with_cache(
+    # Build the subintegrator tree.  Each SplitSubIntegrator is now
+    # self-contained: it holds its own solution_indices, solution_index_tree,
+    # and synchronizer_tree.
+    subintegrator_tree, cache = build_subintegrator_tree_with_cache(
         prob, alg,
         uprev, u,
+        u,          # u_master  == u at the outermost level
         1:length(u),
         t0, dt, tf,
         tstops, saveat, d_discontinuities, callback,
@@ -166,15 +257,13 @@ function SciMLBase.__init(
         cache,
         sol,
         subintegrator_tree,
-        build_solution_index_tree(prob.f),
-        build_synchronizer_tree(prob.f),
         0,
         controller,
         IntegratorOptions(; verbose, adaptive),
         IntegratorStats(),
         tType(tstops_internal.ordering isa DataStructures.FasterForward ? 1 : -1)
     )
-    DiffEqBase.initialize!(callback, u0, t0, integrator) # Do I need this?
+    DiffEqBase.initialize!(callback, u0, t0, integrator)
     return integrator
 end
 
@@ -219,7 +308,6 @@ function DiffEqBase.reinit!(
     return subreinit!(
         integrator.f,
         u0,
-        1:length(u0),
         integrator.subintegrator_tree;
         t0, tf, dt,
         erase_sol,
@@ -230,10 +318,10 @@ function DiffEqBase.reinit!(
     )
 end
 
+# subreinit! for a leaf DEIntegrator
 function subreinit!(
         f,
         u0,
-        solution_indices,
         subintegrator::DEIntegrator;
         dt,
         kwargs...
@@ -242,23 +330,97 @@ function subreinit!(
     if dt !== nothing
         subintegrator.dt = dt
     end
-    return DiffEqBase.reinit!(subintegrator, u0[solution_indices]; kwargs...)
+    # solution_indices are carried by the parent SplitSubIntegrator
+    error("subreinit! called directly on a DEIntegrator — should be reached only via SplitSubIntegrator")
 end
 
-@unroll function subreinit!(
+# subreinit! for an intermediate SplitSubIntegrator
+function subreinit!(
         f,
         u0,
-        solution_indices,
-        subintegrators::Tuple;
+        sub::SplitSubIntegrator;
+        t0,
+        tf,
+        dt,
+        kwargs...
+    )
+    idxs = sub.solution_indices
+    sub.u .= @view u0[idxs]
+    sub.uprev .= @view u0[idxs]
+    sub.t = t0
+    if dt !== nothing
+        sub.dt = dt
+        sub.dtcache = dt
+    end
+    sub.iter = 0
+    sub.force_stepfail = false
+    sub.last_step_failed = false
+    sub.status = SplitSubIntegratorStatus(ReturnCode.Default)
+    # Reset EEst to the appropriate default
+    if isadaptive(sub)
+        sub.EEst = one(sub.EEst)
+    else
+        sub.EEst = sub.EEst  # keep NaN sentinel
+    end
+    return subreinit_children!(f, u0, sub; t0, tf, dt, kwargs...)
+end
+
+@unroll function subreinit_children!(
+        f,
+        u0,
+        sub::SplitSubIntegrator;
         kwargs...
     )
     i = 1
-    @unroll for subintegrator in subintegrators
-        subreinit!(get_operator(f, i), u0, f.solution_indices[i], subintegrator; kwargs...)
+    @unroll for child in sub.subintegrator_tree
+        _subreinit_child!(get_operator(f, i), u0, child, sub.solution_index_tree[i]; kwargs...)
         i += 1
     end
 end
 
+# Dispatch for leaf DEIntegrator children
+function _subreinit_child!(
+        f_child,
+        u0,
+        child::DEIntegrator,
+        child_solution_indices;
+        dt,
+        kwargs...
+    )
+    if dt !== nothing
+        child.dt = dt
+    end
+    return DiffEqBase.reinit!(child, @view(u0[child_solution_indices]); kwargs...)
+end
+
+# Dispatch for nested SplitSubIntegrator children
+function _subreinit_child!(
+        f_child,
+        u0,
+        child::SplitSubIntegrator,
+        _child_solution_indices;  # ignored — child carries its own
+        kwargs...
+    )
+    return subreinit!(f_child, u0, child; kwargs...)
+end
+
+# Top-level subreinit! over a tuple of subintegrators (called from reinit!)
+@unroll function subreinit!(
+        f,
+        u0,
+        subintegrators::Tuple;
+        kwargs...
+    )
+    i = 1
+    @unroll for sub in subintegrators
+        subreinit!(get_operator(f, i), u0, sub; kwargs...)
+        i += 1
+    end
+end
+
+# ---------------------------------------------------------------------------
+# handle_tstop!
+# ---------------------------------------------------------------------------
 function OrdinaryDiffEqCore.handle_tstop!(integrator::OperatorSplittingIntegrator)
     if SciMLBase.has_tstop(integrator)
         tdir_t = tdir(integrator) * integrator.t
@@ -291,7 +453,9 @@ notify_integrator_hit_tstop!(integrator::OperatorSplittingIntegrator) = nothing
 is_first_iteration(integrator::OperatorSplittingIntegrator) = integrator.iter == 0
 increment_iteration(integrator::OperatorSplittingIntegrator) = integrator.iter += 1
 
-# Controller interface
+# ---------------------------------------------------------------------------
+# Controller interface — outermost integrator
+# ---------------------------------------------------------------------------
 function reject_step!(integrator::OperatorSplittingIntegrator)
     OrdinaryDiffEqCore.increment_reject!(integrator.stats)
     return reject_step!(integrator, integrator.cache, integrator.controller)
@@ -334,6 +498,41 @@ function update_uprev!(integrator::OperatorSplittingIntegrator)
     return nothing
 end
 
+# ---------------------------------------------------------------------------
+# Controller interface — SplitSubIntegrator
+# ---------------------------------------------------------------------------
+function reject_step!(sub::SplitSubIntegrator)
+    sub.u .= sub.uprev
+    # Propagate rollback to all leaf DEIntegrators within this subtree so
+    # their state is consistent before the next attempt.
+    _rollback_subintegrator_tree!(sub.subintegrator_tree, sub.u_master)
+end
+
+function _rollback_subintegrator_tree!(subintegrators::Tuple, u_master)
+    @unroll for child in subintegrators
+        _rollback_child!(child, u_master)
+    end
+end
+
+function _rollback_child!(child::SplitSubIntegrator, u_master)
+    child.u .= child.uprev
+    _rollback_subintegrator_tree!(child.subintegrator_tree, u_master)
+end
+
+function _rollback_child!(child::DEIntegrator, u_master)
+    # The leaf integrator's uprev already holds the correct state because
+    # forward_sync_internal! copies u_master into it before each sub-step.
+    # Nothing to do here beyond letting the view aliasing keep things consistent.
+    return nothing
+end
+
+function accept_step!(sub::SplitSubIntegrator)
+    RecursiveArrayTools.recursivecopy!(sub.uprev, sub.u)
+end
+
+# ---------------------------------------------------------------------------
+# step_header! / step_footer! — outermost integrator
+# ---------------------------------------------------------------------------
 function step_header!(integrator::OperatorSplittingIntegrator)
     # Accept or reject the step
     if !is_first_iteration(integrator)
@@ -377,8 +576,7 @@ function step_footer!(integrator::OperatorSplittingIntegrator)
     if should_accept_step(integrator)
         integrator.last_step_failed = false
         integrator.tprev = integrator.t
-        integrator.t = ttmp #OrdinaryDiffEqCore.fixed_t_for_floatingpoint_error!(integrator, ttmp)
-        # OrdinaryDiffEqCore.handle_callbacks!(integrator)
+        integrator.t = ttmp
         step_accept_controller!(integrator) # Noop for non-adaptive algorithms
     elseif integrator.force_stepfail
         if isadaptive(integrator)
@@ -392,11 +590,12 @@ function step_footer!(integrator::OperatorSplittingIntegrator)
         integrator.last_step_failed = true
     end
 
-    # integration_monitor_step(integrator)
-
     return nothing
 end
 
+# ---------------------------------------------------------------------------
+# __solve / solve! / step!
+# ---------------------------------------------------------------------------
 # called by DiffEqBase.solve
 function SciMLBase.__solve(
         prob::OperatorSplittingProblem,
@@ -472,7 +671,7 @@ function SciMLBase.check_error(integrator::OperatorSplittingIntegrator)
 
     verbose = true # integrator.opts.verbose
 
-    if DiffEqBase.NAN_CHECK(integrator.dtcache) || DiffEqBase.NAN_CHECK(integrator.dt) # replace with https://github.com/SciML/OrdinaryDiffEq.jl/blob/373a8eec8024ef1acc6c5f0c87f479aa0cf128c3/lib/OrdinaryDiffEqCore/src/iterator_interface.jl#L5-L6 after moving to sciml integrators
+    if DiffEqBase.NAN_CHECK(integrator.dtcache) || DiffEqBase.NAN_CHECK(integrator.dt)
         if verbose
             @warn("NaN dt detected. Likely a NaN value in the state, parameters, or derivative value caused this outcome.")
         end
@@ -482,9 +681,10 @@ function SciMLBase.check_error(integrator::OperatorSplittingIntegrator)
     return check_error_subintegrators(integrator, integrator.subintegrator_tree)
 end
 
+# Recurse over a tuple of children
 function check_error_subintegrators(integrator, subintegrator_tree::Tuple)
-    for subintegrator in subintegrator_tree
-        retcode = check_error_subintegrators(integrator, subintegrator)
+    for sub in subintegrator_tree
+        retcode = check_error_subintegrators(integrator, sub)
         if !SciMLBase.successful_retcode(retcode) && retcode != ReturnCode.Default
             return retcode
         end
@@ -492,13 +692,23 @@ function check_error_subintegrators(integrator, subintegrator_tree::Tuple)
     return integrator.sol.retcode
 end
 
-function check_error_subintegrators(integrator, subintegrator::DEIntegrator)
-    return SciMLBase.check_error(subintegrator)
+# Leaf: read retcode from the DEIntegrator's solution
+function check_error_subintegrators(integrator, sub::DEIntegrator)
+    return SciMLBase.check_error(sub)
+end
+
+# Intermediate node: read retcode from the SplitSubIntegrator status object
+function check_error_subintegrators(integrator, sub::SplitSubIntegrator)
+    rc = sub.status.retcode
+    if !SciMLBase.successful_retcode(rc) && rc != ReturnCode.Default
+        return rc
+    end
+    # Also recurse into children
+    return check_error_subintegrators(integrator, sub.subintegrator_tree)
 end
 
 function DiffEqBase.step!(integrator::OperatorSplittingIntegrator, dt, stop_at_tdt = false)
     return @timeit_debug "step!" begin
-        # OridinaryDiffEq lets dt be negative if tdir is -1, but that's inconsistent
         dt <= zero(dt) && error("dt must be positive")
         stop_at_tdt && !integrator.dtchangeable &&
             error("Cannot stop at t + dt if dtchangeable is false")
@@ -525,14 +735,10 @@ end
 
 # TimeChoiceIterator API
 @inline function DiffEqBase.get_tmp_cache(integrator::OperatorSplittingIntegrator)
-    # DiffEqBase.get_tmp_cache(integrator, integrator.alg, integrator.cache)
     return (integrator.tmp,)
 end
-# @inline function DiffEqBase.get_tmp_cache(integrator::OperatorSplittingIntegrator, ::AbstractOperatorSplittingAlgorithm, cache)
-#     return (cache.tmp,)
-# end
+
 # Interpolation
-# TODO via https://github.com/SciML/SciMLBase.jl/blob/master/src/interpolation.jl
 function linear_interpolation!(y, t, y1, y2, t1, t2)
     return y .= y1 + (t - t1) * (y2 - y1) / (t2 - t1)
 end
@@ -542,6 +748,9 @@ function (integrator::OperatorSplittingIntegrator)(tmp, t)
     )
 end
 
+# ---------------------------------------------------------------------------
+# Stepsize controller hooks — outermost integrator
+# ---------------------------------------------------------------------------
 """
     stepsize_controller!(::OperatorSplittingIntegrator)
 
@@ -575,21 +784,24 @@ Updates `dtcache` of the integrator if the step is rejected and the the operator
     return step_reject_controller!(integrator, algorithm, nothing)
 end
 
-# helper functions for dealing with time-reversed integrators in the same way
-# that OrdinaryDiffEq.jl does
+# ---------------------------------------------------------------------------
+# Time helpers
+# ---------------------------------------------------------------------------
 tdir(integrator) = integrator.tstops.ordering isa DataStructures.FasterForward ? 1 : -1
 is_past_t(integrator, t) = tdir(integrator) * (t - integrator.t) ≤ zero(integrator.t)
 function reached_tstop(integrator, tstop, stop_at_tstop = integrator.dtchangeable)
     if stop_at_tstop
         integrator.t > tstop &&
             error("Integrator missed stop at $tstop (current time=$(integrator.t)). Aborting.")
-        return integrator.t == tstop # Check for exact hit
-    else #!stop_at_tstop
+        return integrator.t == tstop
+    else
         return is_past_t(integrator, tstop)
     end
 end
 
-# Dunno stuff
+# ---------------------------------------------------------------------------
+# SciMLBase integrator interface
+# ---------------------------------------------------------------------------
 function SciMLBase.done(integrator::OperatorSplittingIntegrator)
     if !(
             integrator.sol.retcode in (
@@ -622,13 +834,25 @@ end
 
 function advance_solution_to!(
         outer_integrator::OperatorSplittingIntegrator,
+        sub::SplitSubIntegrator, sync, cache, tend
+    )
+    # Advance a SplitSubIntegrator node using its own advance_solution_to! dispatch
+    dt = tend - sub.t
+    sub.dt = dt
+    return advance_solution_to!(outer_integrator, sub, tend)
+end
+
+function advance_solution_to!(
+        outer_integrator::OperatorSplittingIntegrator,
         integrator::DEIntegrator, solution_indices, sync, cache, tend
     )
     dt = tend - integrator.t
     return SciMLBase.step!(integrator, dt, true)
 end
 
-# ----------------------------------- SciMLBase.jl Integrator Interface ------------------------------------
+# ---------------------------------------------------------------------------
+# SciMLBase.jl integrator interface
+# ---------------------------------------------------------------------------
 SciMLBase.has_stats(::OperatorSplittingIntegrator) = true
 
 SciMLBase.has_tstop(integrator::OperatorSplittingIntegrator) = !isempty(integrator.tstops)
@@ -637,7 +861,6 @@ SciMLBase.pop_tstop!(integrator::OperatorSplittingIntegrator) = pop!(integrator.
 
 DiffEqBase.get_dt(integrator::OperatorSplittingIntegrator) = integrator.dt
 function set_dt!(integrator::OperatorSplittingIntegrator, dt)
-    # TODO: figure out interface for recomputing other objects (linear operators, etc)
     dt <= zero(dt) && error("dt must be positive")
     return integrator.dt = dt
 end
@@ -656,10 +879,11 @@ function DiffEqBase.add_saveat!(integrator::OperatorSplittingIntegrator, t)
     return push!(integrator.saveat, t)
 end
 
-# not sure what this should do?
-# defined as default initialize: https://github.com/SciML/DiffEqBase.jl/blob/master/src/callbacks.jl#L3
 DiffEqBase.u_modified!(i::OperatorSplittingIntegrator, bool) = nothing
 
+# ---------------------------------------------------------------------------
+# Synchronization
+# ---------------------------------------------------------------------------
 function synchronize_subintegrator_tree!(integrator::OperatorSplittingIntegrator)
     return synchronize_subintegrator!(integrator.subintegrator_tree, integrator)
 end
@@ -667,41 +891,87 @@ end
 @unroll function synchronize_subintegrator!(
         subintegrator_tree::Tuple, integrator::OperatorSplittingIntegrator
     )
-    @unroll for subintegrator in subintegrator_tree
-        synchronize_subintegrator!(subintegrator, integrator)
+    @unroll for sub in subintegrator_tree
+        synchronize_subintegrator!(sub, integrator)
     end
 end
 
+# Sync a SplitSubIntegrator node: update its t/dt then recurse into children
 function synchronize_subintegrator!(
-        subintegrator::DEIntegrator, integrator::OperatorSplittingIntegrator
+        sub::SplitSubIntegrator, integrator::OperatorSplittingIntegrator
     )
     (; t, dt) = integrator
-    @assert subintegrator.t == t
-    return if !isadaptive(subintegrator)
-        SciMLBase.set_proposed_dt!(subintegrator, dt)
+    @assert sub.t == t "SplitSubIntegrator time $(sub.t) out of sync with outer integrator time $t"
+    if !isadaptive(sub)
+        sub.dt = dt
+        sub.dtcache = dt
+    end
+    # Recurse: sync children against the *sub-integrator* (not outer) time
+    @unroll for child in sub.subintegrator_tree
+        synchronize_subintegrator_child!(child, sub)
     end
 end
 
+function synchronize_subintegrator_child!(
+        child::DEIntegrator, parent::SplitSubIntegrator
+    )
+    @assert child.t == parent.t "Child integrator time $(child.t) out of sync with parent time $(parent.t)"
+    if !isadaptive(child)
+        SciMLBase.set_proposed_dt!(child, parent.dt)
+    end
+end
+
+function synchronize_subintegrator_child!(
+        child::SplitSubIntegrator, parent::SplitSubIntegrator
+    )
+    @assert child.t == parent.t "Nested SplitSubIntegrator time $(child.t) out of sync with parent time $(parent.t)"
+    if !isadaptive(child)
+        child.dt = parent.dt
+        child.dtcache = parent.dt
+    end
+end
+
+# ---------------------------------------------------------------------------
+# advance_solution_to! for AbstractOperatorSplittingCache
+# (dispatches into the algorithm-specific method in solver.jl)
+# ---------------------------------------------------------------------------
 function advance_solution_to!(
         integrator::OperatorSplittingIntegrator,
         cache::AbstractOperatorSplittingCache, tnext::Number
     )
     return advance_solution_to!(
-        integrator, integrator.subintegrator_tree, integrator.solution_index_tree,
-        integrator.synchronizer_tree, cache, tnext
+        integrator, integrator.subintegrator_tree, cache, tnext
     )
 end
 
-# Dispatch for tree node construction
+# advance_solution_to! for a SplitSubIntegrator node
+# (the algorithm-specific method in solver.jl calls this signature)
+function advance_solution_to!(
+        outer_integrator::OperatorSplittingIntegrator,
+        sub::SplitSubIntegrator, tend
+    )
+    return advance_solution_to!(
+        outer_integrator, sub, sub.subintegrator_tree,
+        sub.solution_index_tree, sub.synchronizer_tree,
+        sub.cache, tend
+    )
+end
+
+# ---------------------------------------------------------------------------
+# Tree construction
+# ---------------------------------------------------------------------------
+# Top-level dispatch: builds a Tuple of SplitSubIntegrators
 function build_subintegrator_tree_with_cache(
         prob::OperatorSplittingProblem, alg::AbstractOperatorSplittingAlgorithm,
         uprevouter::AbstractVector, uouter::AbstractVector,
+        u_master::AbstractVector,
         solution_indices,
         t0, dt, tf,
         tstops, saveat, d_discontinuities, callback,
         adaptive, verbose
     )
     (; f, p) = prob
+
     subintegrator_tree_with_caches = ntuple(
         i -> build_subintegrator_tree_with_cache(
             prob,
@@ -709,6 +979,7 @@ function build_subintegrator_tree_with_cache(
             get_operator(f, i),
             p[i],
             uprevouter, uouter,
+            u_master,
             f.solution_indices[i],
             t0, dt, tf,
             tstops, saveat, d_discontinuities, callback,
@@ -722,7 +993,6 @@ function build_subintegrator_tree_with_cache(
     )
     caches = ntuple(i -> subintegrator_tree_with_caches[i][2], length(f.functions))
 
-    # TODO fix mixed device type problems we have to be smarter
     return subintegrator_tree,
         init_cache(
             f, alg;
@@ -731,10 +1001,13 @@ function build_subintegrator_tree_with_cache(
         )
 end
 
+# Intermediate node: inner algorithm is also an AbstractOperatorSplittingAlgorithm
+# wrapping a GenericSplitFunction → produce a SplitSubIntegrator
 function build_subintegrator_tree_with_cache(
         prob::OperatorSplittingProblem, alg::AbstractOperatorSplittingAlgorithm,
         f::GenericSplitFunction, p::Tuple,
         uprevouter::AbstractVector, uouter::AbstractVector,
+        u_master::AbstractVector,
         solution_indices,
         t0, dt, tf,
         tstops, saveat, d_discontinuities, callback,
@@ -742,13 +1015,17 @@ function build_subintegrator_tree_with_cache(
         save_end = false,
         controller = nothing
     )
-    subintegrator_tree_with_caches = ntuple(
+    tType = typeof(dt)
+
+    # Build children recursively
+    child_results = ntuple(
         i -> build_subintegrator_tree_with_cache(
             prob,
             alg.inner_algs[i],
             get_operator(f, i),
             p[i],
             uprevouter, uouter,
+            u_master,
             f.solution_indices[i],
             t0, dt, tf,
             tstops, saveat, d_discontinuities, callback,
@@ -757,25 +1034,57 @@ function build_subintegrator_tree_with_cache(
         length(f.functions)
     )
 
-    subintegrator_tree = first.(subintegrator_tree_with_caches)
-    inner_caches = last.(subintegrator_tree_with_caches)
+    child_subintegrators = ntuple(i -> child_results[i][1], length(f.functions))
+    child_caches         = ntuple(i -> child_results[i][2], length(f.functions))
 
-    # TODO fix mixed device type problems we have to be smarter
-    uprev = @view uprevouter[solution_indices]
-    u = @view uouter[solution_indices]
-    return subintegrator_tree,
-        init_cache(
-            f, alg;
-            uprev = uprev, u = u,
-            inner_caches = inner_caches
-        )
+    # Build per-child solution_index_tree and synchronizer_tree
+    child_solution_indices = ntuple(i -> f.solution_indices[i], length(f.functions))
+    child_synchronizers    = ntuple(i -> f.synchronizers[i], length(f.functions))
+
+    # Cache for *this* level
+    u_sub    = @view uouter[solution_indices]
+    uprev_sub = @view uprevouter[solution_indices]
+    level_cache = init_cache(
+        f, alg;
+        uprev = uprev_sub, u = u_sub,
+        inner_caches = child_caches
+    )
+
+    # EEst default
+    EEst_val = isadaptive(alg) ? one(tType) : tType(NaN)
+
+    sub = SplitSubIntegrator(
+        alg,
+        u_sub,
+        RecursiveArrayTools.recursivecopy(u_sub),   # uprev: local copy for rollback
+        u_master,
+        t0,
+        dt,
+        dt,         # dtcache
+        0,          # iter
+        EEst_val,
+        controller,
+        false,      # force_stepfail
+        false,      # last_step_failed
+        SplitSubIntegratorStatus(),
+        level_cache,
+        child_subintegrators,
+        solution_indices,
+        child_solution_indices,
+        child_synchronizers
+    )
+
+    return sub, level_cache
 end
 
+# Leaf node: inner algorithm is a plain SciMLBase.AbstractODEAlgorithm
+# → produce an ODEIntegrator (existing behaviour)
 function build_subintegrator_tree_with_cache(
         prob::OperatorSplittingProblem,
         alg::SciMLBase.AbstractODEAlgorithm,
         f::F, p::P,
         uprevouter::S, uouter::S,
+        u_master::S,
         solution_indices,
         t0::T, dt::T, tf::T,
         tstops, saveat, d_discontinuities, callback,
@@ -786,10 +1095,6 @@ function build_subintegrator_tree_with_cache(
     uprev = @view uprevouter[solution_indices]
     u = @view uouter[solution_indices]
 
-    # When working with MTK, we want to pass f as a system down here.
-    # In that case ODEProblem constructs the correct parameter struct.
-    # If the system does not have parameters in first place, then
-    # The NullParameters object will be constructed automatically.
     prob2 = if p isa NullParameters
         SciMLBase.ODEProblem(f, u, (t0, min(t0 + dt, tf)))
     else
@@ -812,6 +1117,7 @@ function build_subintegrator_tree_with_cache(
     return integrator, integrator.cache
 end
 
+# forward/backward sync no-ops for tuple nodes (handled inside SplitSubIntegrator)
 function forward_sync_subintegrator!(
         outer_integrator::OperatorSplittingIntegrator, subintegrator_tree::Tuple,
         solution_indices::Tuple, synchronizers::Tuple

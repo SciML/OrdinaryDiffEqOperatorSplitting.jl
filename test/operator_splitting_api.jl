@@ -8,7 +8,9 @@ using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqTsit5
 using ModelingToolkit
 
-# Reference
+# ---------------------------------------------------------------------------
+# Reference problem
+# ---------------------------------------------------------------------------
 tspan = (0.0, 100.0)
 u0 = [
     0.7611944793397108
@@ -33,26 +35,22 @@ end
 trueu = exp((tspan[2] - tspan[1]) * (trueA + trueB)) * u0
 
 # Setup individual functions
-# Diagonal components
 function ode1(du, u, p, t)
     return @. du = -0.1u
 end
 f1 = ODEFunction(ode1)
 
-# Off-diagonal components
 function ode2(du, u, p, t)
     du[1] = -0.01u[2]
     return du[2] = -0.01u[1]
 end
 f2 = ODEFunction(ode2)
 
-# Now some recursive splitting
 function ode3(du, u, p, t)
     du[1] = -0.005u[2]
     return du[2] = -0.005u[1]
 end
 f3 = ODEFunction(ode3)
-# The time stepper carries the individual solver information.
 
 @independent_variables time
 Dt = Differential(time)
@@ -69,99 +67,122 @@ end
 @named testmodel2 = TestModelODE2()
 testsys2 = mtkcompile(testmodel2; sort_eqs = false)
 
-# Test whether adaptive code path works in principle
+# ---------------------------------------------------------------------------
+# FakeAdaptiveAlgorithm — tests adaptive code path
+#
+# With the new interface FakeAdaptiveAlgorithm no longer needs to override
+# build_subintegrator_tree_with_cache.  It just wraps the standard cache in
+# its own FakeAdaptiveAlgorithmCache.
+# ---------------------------------------------------------------------------
 struct FakeAdaptiveAlgorithm{T} <: OS.AbstractOperatorSplittingAlgorithm
     alg::T
+    inner_algs::T   # delegate inner_algs to the wrapped algorithm
 end
+FakeAdaptiveAlgorithm(alg::T) where {T} = FakeAdaptiveAlgorithm{T}(alg, alg.inner_algs)
+
 struct FakeAdaptiveAlgorithmCache{T} <: OS.AbstractOperatorSplittingCache
     cache::T
 end
+
 @inline DiffEqBase.isadaptive(::FakeAdaptiveAlgorithm) = true
 
-@inline function OS.stepsize_controller!(integrator::OS.OperatorSplittingIntegrator, alg::FakeAdaptiveAlgorithm)
+@inline function OS.stepsize_controller!(
+        integrator::OS.OperatorSplittingIntegrator, alg::FakeAdaptiveAlgorithm
+    )
     return nothing
 end
 
-@inline function OS.step_accept_controller!(integrator::OS.OperatorSplittingIntegrator, alg::FakeAdaptiveAlgorithm, q)
+@inline function OS.step_accept_controller!(
+        integrator::OS.OperatorSplittingIntegrator, alg::FakeAdaptiveAlgorithm, q
+    )
     integrator.dt = integrator.dtcache
     return nothing
 end
-@inline function OS.step_reject_controller!(integrator::OS.OperatorSplittingIntegrator, alg::FakeAdaptiveAlgorithm, q)
+@inline function OS.step_reject_controller!(
+        integrator::OS.OperatorSplittingIntegrator, alg::FakeAdaptiveAlgorithm, q
+    )
     error("The tests should never run into this scenario!")
-    return nothing # Do nothing
+    return nothing
 end
-function OS.build_subintegrator_tree_with_cache(
-        prob::OS.OperatorSplittingProblem, alg::FakeAdaptiveAlgorithm,
-        uprevouter::AbstractVector, uouter::AbstractVector,
-        solution_indices,
-        t0, dt, tf,
-        tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose,
-    )
-    subintegrators, inner_cache = OS.build_subintegrator_tree_with_cache(
-        prob, alg.alg, uprevouter, uouter, solution_indices,
-        t0, dt, tf,
-        tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose,
-    )
 
-    return subintegrators, FakeAdaptiveAlgorithmCache(
-            inner_cache,
-        )
+# Override init_cache to wrap the inner cache in FakeAdaptiveAlgorithmCache
+function OS.init_cache(
+        f::GenericSplitFunction, alg::FakeAdaptiveAlgorithm;
+        kwargs...
+    )
+    inner_cache = OS.init_cache(f, alg.alg; kwargs...)
+    return FakeAdaptiveAlgorithmCache(inner_cache)
 end
-function OS.build_subintegrator_tree_with_cache(
-        prob::OS.OperatorSplittingProblem, alg::FakeAdaptiveAlgorithm,
-        f::GenericSplitFunction, p::Tuple,
-        uprevouter::AbstractVector, uouter::AbstractVector,
-        solution_indices,
-        t0, dt, tf,
-        tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose,
-        save_end = false,
-        controller = nothing
-    )
-    subintegrators, inner_cache = OS.build_subintegrator_tree_with_cache(
-        prob, alg.alg, f, p, uprevouter, uouter, solution_indices,
-        t0, dt, tf,
-        tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose,
-    )
 
-    return subintegrators, FakeAdaptiveAlgorithmCache(
-            inner_cache,
-        )
+@inline DiffEqBase.get_tmp_cache(
+        integrator::OS.OperatorSplittingIntegrator,
+        alg::OS.AbstractOperatorSplittingAlgorithm,
+        cache::FakeAdaptiveAlgorithmCache
+    ) = DiffEqBase.get_tmp_cache(integrator, alg, cache.cache)
+
+@inline function OS.advance_solution_to!(
+        outer_integrator::OS.OperatorSplittingIntegrator,
+        subintegrators::Tuple,
+        cache::FakeAdaptiveAlgorithmCache,
+        tnext
+    )
+    return OS.advance_solution_to!(
+        outer_integrator, subintegrators, cache.cache, tnext
+    )
 end
+
+# For SplitSubIntegrator nodes whose cache was wrapped by FakeAdaptiveAlgorithmCache
+@inline function OS.advance_solution_to!(
+        outer_integrator::OS.OperatorSplittingIntegrator,
+        sub::OS.SplitSubIntegrator,
+        subintegrators::Tuple,
+        solution_indices::Tuple,
+        synchronizers::Tuple,
+        cache::FakeAdaptiveAlgorithmCache,
+        tnext
+    )
+    return OS.advance_solution_to!(
+        outer_integrator, sub, subintegrators, solution_indices,
+        synchronizers, cache.cache, tnext
+    )
+end
+
 FakeAdaptiveLTG(inner) = FakeAdaptiveAlgorithm(LieTrotterGodunov(inner))
 
-@inline DiffEqBase.get_tmp_cache(integrator::OS.OperatorSplittingIntegrator, alg::OS.AbstractOperatorSplittingAlgorithm, cache::FakeAdaptiveAlgorithmCache) = DiffEqBase.get_tmp_cache(integrator, alg, cache.cache)
-@inline function OS.advance_solution_to!(outer_integrator::OS.OperatorSplittingIntegrator, subintegrators::Tuple, solution_indices::Tuple, synchronizers::Tuple, cache::FakeAdaptiveAlgorithmCache, tnext)
-    return OS.advance_solution_to!(outer_integrator, subintegrators, solution_indices, synchronizers, cache.cache, tnext)
+# ---------------------------------------------------------------------------
+# Helper: given the outer integrator, walk into the first SplitSubIntegrator
+# and find the first leaf DEIntegrator.
+# ---------------------------------------------------------------------------
+function first_leaf_integrator(integrator)
+    node = integrator.subintegrator_tree[1]
+    while node isa OS.SplitSubIntegrator
+        node = node.subintegrator_tree[1]
+    end
+    return node
 end
 
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
 @testset "reinit and convergence" begin
     dt = 0.01π
 
-    # Here we describe index sets f1dofs and f2dofs that map the
-    # local indices in f1 and f2 into the global problem. Just put
-    # ode_true and ode1/ode2 side by side to see how they connect.
     f1dofs = [1, 2, 3]
     f2dofs = [1, 3]
     fsplit1a = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
     fsplit1b = GenericSplitFunction((f1, testsys2), (f1dofs, f2dofs))
 
-    # Now the usual setup just with our new problem type.
     prob1a = OperatorSplittingProblem(fsplit1a, u0, tspan)
     prob1b = OperatorSplittingProblem(fsplit1b, u0, tspan)
 
-    # Note that we define the dof indices w.r.t the parent function.
-    # Hence the indices for `fsplit2_inner` are.
-    f1dofs = [1, 2, 3]
-    f2dofs = [1, 3]
     f3dofs = [1, 3]
     fsplit2_inner = GenericSplitFunction((f3, f3), (f3dofs, f3dofs))
     fsplit2_outer = GenericSplitFunction((f1, fsplit2_inner), (f1dofs, f2dofs))
 
     prob2 = OperatorSplittingProblem(fsplit2_outer, u0, tspan)
+
+    nsteps = ceil(Int, (tspan[2] - tspan[1]) / dt)
+
     for TimeStepperType in (LieTrotterGodunov, FakeAdaptiveLTG)
         @testset "Solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
                 (prob1a, TimeStepperType((Euler(), Euler()))),
@@ -179,20 +200,24 @@ end
                 (prob2, TimeStepperType((Tsit5(), TimeStepperType((Euler(), Tsit5()))))),
                 (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Tsit5()))))),
             )
-            # The remaining code works as usual.
             integrator = DiffEqBase.init(
                 prob, tstepper, dt = dt, verbose = true, alias_u0 = false, adaptive = false
             )
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
+
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
             ufinal = copy(integrator.u)
             @test isapprox(ufinal, trueu, atol = 1.0e-6)
             @test integrator.t ≈ tspan[2]
-            @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.iter == nsteps
+
+            # SplitSubIntegrators now carry t and iter at each level
+            sub1 = integrator.subintegrator_tree[1]
+            @test sub1 isa OS.SplitSubIntegrator
+            @test sub1.t ≈ tspan[2]
+            @test sub1.iter == nsteps
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -200,10 +225,8 @@ end
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
-            @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.iter == nsteps
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -211,20 +234,16 @@ end
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
-            @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.iter == nsteps
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
             @test integrator.t ≈ tspan[2]
-            @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.iter == nsteps
         end
     end
 
@@ -233,7 +252,6 @@ end
                 (prob1a, TimeStepperType((Tsit5(), Tsit5()))),
                 (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Tsit5()))))),
             )
-            # The remaining code works as usual.
             integrator = DiffEqBase.init(
                 prob, tstepper, dt = dt, verbose = true, alias_u0 = false, adaptive = true
             )
@@ -243,10 +261,8 @@ end
             ufinal = copy(integrator.u)
             @test isapprox(ufinal, trueu, atol = 1.0e-6)
             @test integrator.t ≈ tspan[2]
-            @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.iter == nsteps
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -254,10 +270,8 @@ end
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
-            @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.iter == nsteps
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -265,24 +279,20 @@ end
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
-            @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.iter == nsteps
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
             @test integrator.t ≈ tspan[2]
-            @test integrator.subintegrator_tree[1].t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
-            @test integrator.iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
-            @test integrator.subintegrator_tree[1].iter == ceil(Int, (tspan[2] - tspan[1]) / dt)
+            @test integrator.iter == nsteps
         end
     end
 
-    @testset "Instbility detectioon" begin
+    @testset "Instability detection" begin
         dt = 0.01π
 
         function ode_NaN(du, u, p, t)
@@ -291,11 +301,10 @@ end
         end
 
         f1dofs = [1, 2, 3]
-        f2dofs = [1, 3]
+        f3dofs = [1, 3]
 
         f_NaN = ODEFunction(ode_NaN)
-        f_NaN_dofs = f3dofs
-        fsplit_NaN = GenericSplitFunction((f1, f_NaN), (f1dofs, f_NaN_dofs))
+        fsplit_NaN = GenericSplitFunction((f1, f_NaN), (f1dofs, f3dofs))
         prob_NaN = OperatorSplittingProblem(fsplit_NaN, u0, tspan)
 
         for TimeStepperType in (LieTrotterGodunov,)
