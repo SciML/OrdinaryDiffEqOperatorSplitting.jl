@@ -3,7 +3,6 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     FT = typeof(tf)
     ordering = tf > t0 ? DataStructures.FasterForward : DataStructures.FasterReverse
 
-    # ensure that tstops includes tf and only has values ahead of t0
     tstops = [filter(t -> t0 < t < tf || tf < t < t0, tstops)..., tf]
     tstops = DataStructures.BinaryHeap{FT, ordering}(tstops)
 
@@ -25,212 +24,195 @@ end
     need_sync(a, b)
 
 Determines whether it is necessary to synchronize two objects with any
-solution information.
+solution information. A possible reason when no synchronization is necessary
+might be that the vectors alias each other in memory.
 """
 need_sync
 
 need_sync(a::AbstractVector, b::AbstractVector) = true
-need_sync(a::SubArray, b::AbstractVector) = a.parent !== b
-need_sync(a::AbstractVector, b::SubArray) = a !== b.parent
-need_sync(a::SubArray, b::SubArray) = a.parent !== b.parent
+need_sync(a::SubArray, b::AbstractVector)       = a.parent !== b
+need_sync(a::AbstractVector, b::SubArray)       = a !== b.parent
+need_sync(a::SubArray, b::SubArray)             = a.parent !== b.parent
 
 """
     sync_vectors!(a, b)
 
-Copies the information in object `b` into object `a`, if synchronization is necessary.
+Copies the information in `b` into `a` if synchronization is necessary.
 """
 function sync_vectors!(a, b)
-    return if need_sync(a, b) && a !== b
+    if need_sync(a, b) && a !== b
         a .= b
     end
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
 # forward_sync_subintegrator!
+#
+# The *parent* (OperatorSplittingIntegrator or SplitSubIntegrator) calls this
+# before each child's step.  It copies the relevant slice of the master
+# solution into the child and applies any external parameter synchronisation.
 # ---------------------------------------------------------------------------
-"""
-    forward_sync_subintegrator!(outer_integrator, inner, solution_indices, sync)
 
-Copy state from the outer integrator into the inner integrator before a
-sub-step, and apply any external parameter synchronisation via `sync`.
-"""
+# Parent = outermost OperatorSplittingIntegrator, child = DEIntegrator
 function forward_sync_subintegrator!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, solution_indices, sync
+        parent::OperatorSplittingIntegrator,
+        child::DEIntegrator,
+        solution_indices,
+        sync
     )
-    forward_sync_internal!(outer_integrator, inner_integrator, solution_indices)
-    return forward_sync_external!(outer_integrator, inner_integrator, sync)
+    _forward_sync_internal_leaf!(parent.u, child, solution_indices)
+    return forward_sync_external!(parent, child, sync)
 end
 
-"""
-    forward_sync_subintegrator! for SplitSubIntegrator
-
-When the inner node is a `SplitSubIntegrator` we only need to copy the master
-solution vector slice into its `u` (the `SplitSubIntegrator.u` is already a
-view, but on a different device or after a rollback it may need refreshing).
-"""
+# Parent = outermost OperatorSplittingIntegrator, child = SplitSubIntegrator
 function forward_sync_subintegrator!(
-        outer_integrator::OperatorSplittingIntegrator,
-        sub::SplitSubIntegrator, solution_indices, sync
+        parent::OperatorSplittingIntegrator,
+        child::SplitSubIntegrator,
+        solution_indices,
+        sync
     )
-    # Sync the view: master → sub.u  (noop if they already alias)
-    @views uouter = outer_integrator.u[solution_indices]
-    sync_vectors!(sub.u, uouter)
-    sync_vectors!(sub.uprev, uouter)
-    return forward_sync_external!(outer_integrator, sub, sync)
+    @views uparent = parent.u[solution_indices]
+    sync_vectors!(child.u,     uparent)
+    sync_vectors!(child.uprev, uparent)
+    forward_sync_external!(parent, child, sync)
+    return nothing
+end
+
+# Parent = SplitSubIntegrator, child = DEIntegrator
+function forward_sync_subintegrator!(
+        parent::SplitSubIntegrator,
+        child::DEIntegrator,
+        solution_indices,
+        sync
+    )
+    # parent.u is this level's buffer; solution_indices are relative to
+    # the master u.  We read from the master via u_master.
+    _forward_sync_internal_leaf!(parent.u_master, child, solution_indices)
+    forward_sync_external!(parent, child, sync)
+    return nothing
+end
+
+# Parent = SplitSubIntegrator, child = SplitSubIntegrator
+function forward_sync_subintegrator!(
+        parent::SplitSubIntegrator,
+        child::SplitSubIntegrator,
+        solution_indices,
+        sync
+    )
+    @views umaster = parent.u_master[solution_indices]
+    sync_vectors!(child.u,     umaster)
+    sync_vectors!(child.uprev, umaster)
+    forward_sync_external!(parent, child, sync)
+    return nothing
+end
+
+# Shared internal helper: copy master u slice → leaf DEIntegrator u/uprev
+function _forward_sync_internal_leaf!(u_source, child::DEIntegrator, solution_indices)
+    @views usrc = u_source[solution_indices]
+    sync_vectors!(child.uprev, usrc)
+    sync_vectors!(child.u,     usrc)
+    SciMLBase.u_modified!(child, true)
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
 # backward_sync_subintegrator!
+#
+# The *parent* calls this after each child's step to copy the child's updated
+# state back into the master solution vector.
 # ---------------------------------------------------------------------------
-"""
-    backward_sync_subintegrator!(outer_integrator, inner, solution_indices, sync)
 
-Copy state from the inner integrator back into the outer integrator after a
-sub-step, and apply any external parameter synchronisation via `sync`.
-"""
+# Parent = outermost OperatorSplittingIntegrator, child = DEIntegrator
 function backward_sync_subintegrator!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, solution_indices, sync
+        parent::OperatorSplittingIntegrator,
+        child::DEIntegrator,
+        solution_indices,
+        sync
     )
-    backward_sync_internal!(outer_integrator, inner_integrator, solution_indices)
-    return backward_sync_external!(outer_integrator, inner_integrator, sync)
-end
-
-function backward_sync_subintegrator!(
-        outer_integrator::OperatorSplittingIntegrator,
-        sub::SplitSubIntegrator, solution_indices, sync
-    )
-    @views uouter = outer_integrator.u[solution_indices]
-    sync_vectors!(uouter, sub.u)
-    return backward_sync_external!(outer_integrator, sub, sync)
-end
-
-# ---------------------------------------------------------------------------
-# forward_sync_internal! / backward_sync_internal!
-# ---------------------------------------------------------------------------
-function forward_sync_internal!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::OperatorSplittingIntegrator, solution_indices
-    )
-    return nothing
-end
-function backward_sync_internal!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::OperatorSplittingIntegrator, solution_indices
-    )
+    @views uparent = parent.u[solution_indices]
+    sync_vectors!(uparent, child.u)
+    backward_sync_external!(parent, child, sync)
     return nothing
 end
 
-function forward_sync_internal!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, solution_indices
+# Parent = outermost OperatorSplittingIntegrator, child = SplitSubIntegrator
+function backward_sync_subintegrator!(
+        parent::OperatorSplittingIntegrator,
+        child::SplitSubIntegrator,
+        solution_indices,
+        sync
     )
-    @views uouter = outer_integrator.u[solution_indices]
-    sync_vectors!(inner_integrator.uprev, uouter)
-    sync_vectors!(inner_integrator.u, uouter)
-    return SciMLBase.u_modified!(inner_integrator, true)
+    @views uparent = parent.u[solution_indices]
+    sync_vectors!(uparent, child.u)
+    return backward_sync_external!(parent, child, sync)
 end
-function backward_sync_internal!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, solution_indices
+
+# Parent = SplitSubIntegrator, child = DEIntegrator
+function backward_sync_subintegrator!(
+        parent::SplitSubIntegrator,
+        child::DEIntegrator,
+        solution_indices,
+        sync
     )
-    @views uouter = outer_integrator.u[solution_indices]
-    return sync_vectors!(uouter, inner_integrator.u)
+    @views umaster = parent.u_master[solution_indices]
+    sync_vectors!(umaster, child.u)
+    # Also keep parent.u consistent
+    @views ulocal = parent.u[solution_indices .- first(parent.solution_indices) .+ 1]
+    sync_vectors!(ulocal, child.u)
+    return backward_sync_external!(parent, child, sync)
+end
+
+# Parent = SplitSubIntegrator, child = SplitSubIntegrator
+function backward_sync_subintegrator!(
+        parent::SplitSubIntegrator,
+        child::SplitSubIntegrator,
+        solution_indices,
+        sync
+    )
+    @views umaster = parent.u_master[solution_indices]
+    sync_vectors!(umaster, child.u)
+    @views ulocal = parent.u[solution_indices .- first(parent.solution_indices) .+ 1]
+    sync_vectors!(ulocal, child.u)
+    return backward_sync_external!(parent, child, sync)
 end
 
 # ---------------------------------------------------------------------------
 # forward_sync_external! / backward_sync_external!
+# These handle parameter synchronisation via the `sync` object.
 # ---------------------------------------------------------------------------
+
+# NoExternalSynchronization: no-op for all parent/child combinations
+forward_sync_external!(parent::DEIntegrator, child::DEIntegrator, ::NoExternalSynchronization)  = nothing
+backward_sync_external!(parent::DEIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
+forward_sync_external!(parent::OperatorSplittingIntegrator, child::DEIntegrator, ::NoExternalSynchronization)  = nothing
+backward_sync_external!(parent::OperatorSplittingIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
+
+# OperatorSplittingIntegrator parent with DEIntegrator child: parameter sync
 function forward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::OperatorSplittingIntegrator, sync::NoExternalSynchronization
+        parent::OperatorSplittingIntegrator,
+        child::DEIntegrator,
+        sync
     )
-    return nothing
+    return synchronize_solution_with_parameters!(parent, child.p, sync)
 end
-function forward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, sync::NoExternalSynchronization
+function backward_sync_external!(
+        parent::OperatorSplittingIntegrator,
+        child::DEIntegrator,
+        sync
     )
-    return nothing
-end
-# SplitSubIntegrator has no parameters for now → no-op
-function forward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        sub::SplitSubIntegrator, sync::NoExternalSynchronization
-    )
-    return nothing
-end
-function forward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, sync
-    )
-    return synchronize_solution_with_parameters!(outer_integrator, inner_integrator.p, sync)
-end
-function forward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        sub::SplitSubIntegrator, sync
-    )
-    # SplitSubIntegrator does not carry p for now; dispatch on sync type if needed
-    return nothing
+    return synchronize_solution_with_parameters!(parent, child.p, sync)
 end
 
-function backward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::OperatorSplittingIntegrator, sync::NoExternalSynchronization
-    )
-    return nothing
-end
-function backward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, sync::NoExternalSynchronization
-    )
-    return nothing
-end
-function backward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        sub::SplitSubIntegrator, sync::NoExternalSynchronization
-    )
-    return nothing
-end
-function backward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, sync
-    )
-    return synchronize_solution_with_parameters!(outer_integrator, inner_integrator.p, sync)
-end
-function backward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        sub::SplitSubIntegrator, sync
-    )
-    return nothing
-end
 
 function synchronize_solution_with_parameters!(
-        outer_integrator::OperatorSplittingIntegrator, p, sync
+        parent::OperatorSplittingIntegrator, p, sync
     )
     @warn "Outer synchronizer not dispatched for parameter type $(typeof(p)) with synchronizer type $(typeof(sync))." maxlog = 1
     return nothing
 end
 function synchronize_solution_with_parameters!(
-        outer_integrator::OperatorSplittingIntegrator, p::NullParameters, sync
+        parent::OperatorSplittingIntegrator, ::NullParameters, sync
     )
-    return nothing
-end
-
-# ---------------------------------------------------------------------------
-# NOTE: build_solution_index_tree and build_synchronizer_tree are NO LONGER
-# needed as standalone functions — the information is now embedded directly
-# into each SplitSubIntegrator during build_subintegrator_tree_with_cache.
-# They are kept here (no-ops returning nothing) only so that any external
-# code that might call them does not hard-error.
-# ---------------------------------------------------------------------------
-function build_solution_index_tree(f::GenericSplitFunction)
-    # Deprecated: solution index trees now live inside SplitSubIntegrator.
-    return nothing
-end
-
-function build_synchronizer_tree(f::GenericSplitFunction)
-    # Deprecated: synchronizer trees now live inside SplitSubIntegrator.
     return nothing
 end

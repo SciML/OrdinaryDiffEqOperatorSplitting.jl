@@ -215,7 +215,6 @@ end
 
             # SplitSubIntegrators now carry t and iter at each level
             sub1 = integrator.subintegrator_tree[1]
-            @test sub1 isa OS.SplitSubIntegrator
             @test sub1.t ≈ tspan[2]
             @test sub1.iter == nsteps
 

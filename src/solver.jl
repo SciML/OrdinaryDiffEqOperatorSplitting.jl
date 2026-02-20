@@ -1,8 +1,11 @@
-# Lie-Trotter-Godunov Splitting Implementation
+# ---------------------------------------------------------------------------
+# Lie-Trotter-Godunov operator splitting
+# ---------------------------------------------------------------------------
 """
     LieTrotterGodunov <: AbstractOperatorSplittingAlgorithm
 
-A first order sequential operator splitting algorithm attributed to [Lie:1880:tti,Tro:1959:psg,God:1959:dmn](@cite).
+First-order sequential operator splitting algorithm attributed to
+[Lie:1880:tti,Tro:1959:psg,God:1959:dmn](@cite).
 """
 struct LieTrotterGodunov{AlgTupleType} <: AbstractOperatorSplittingAlgorithm
     inner_algs::AlgTupleType
@@ -22,121 +25,150 @@ function init_cache(
         alias_u = false
     )
     _uprev = alias_uprev ? uprev : RecursiveArrayTools.recursivecopy(uprev)
-    _u = alias_u ? u : RecursiveArrayTools.recursivecopy(u)
+    _u     = alias_u     ? u     : RecursiveArrayTools.recursivecopy(u)
     return LieTrotterGodunovCache(_u, _uprev, inner_caches)
 end
 
 # ---------------------------------------------------------------------------
-# advance_solution_to! for the outermost integrator with a Tuple of children
-# This is the top-level dispatch when the outer integrator's cache is a
-# LieTrotterGodunovCache and children are SplitSubIntegrators or DEIntegrators.
+# advance_solution_to! for a SplitSubIntegrator node
+#
+# The SplitSubIntegrator is now the *parent* for its own children.
+# It carries child_solution_indices and child_synchronizers directly.
+#
+# Entry point called from integrator.jl for a SplitSubIntegrator node
 # ---------------------------------------------------------------------------
-@inline @unroll function advance_solution_to!(
-        outer_integrator::OperatorSplittingIntegrator,
-        subintegrators::Tuple, cache::LieTrotterGodunovCache, tnext
+function advance_solution_to!(
+        outer::OperatorSplittingIntegrator,
+        children::Tuple,
+        cache::AbstractOperatorSplittingCache,
+        tnext
     )
-    (; inner_caches) = cache
+    _perform_step!(outer, children, cache, tnext)
+
+    if outer.force_stepfail
+        outer.sol = SciMLBase.solution_new_retcode(
+            outer.sol,
+            ReturnCode.Failure
+        )
+        return
+    end
+
+    # All children succeeded: advance this node's time and counter
+    # outer.sol = SciMLBase.solution_new_retcode(
+    #     outer.sol,
+    #     ReturnCode.Success
+    # )
+    return
+end
+
+function advance_solution_to!(
+    outer::SplitSubIntegrator,
+    children::Tuple,
+    cache::AbstractOperatorSplittingCache,
+    tnext
+)
+    _perform_step!(outer, children, cache, tnext)
+
+    if outer.force_stepfail
+        outer.status = SplitSubIntegratorStatus(ReturnCode.Failure)
+        return
+    end
+
+    # All children succeeded: advance this node's time and counter
+    outer.status  = SplitSubIntegratorStatus(ReturnCode.Success)
+
+    return
+end
+
+@unroll function _perform_step!(
+    outer,
+    children::Tuple,
+    cache::LieTrotterGodunovCache,
+    tnext
+)
     i = 0
-    @unroll for subinteg in subintegrators
+    @unroll for child in children
         i += 1
-        inner_cache = inner_caches[i]
-        _advance_child!(outer_integrator, subinteg, inner_cache, tnext)
-        # Check for failure after each child
-        if _child_failed(outer_integrator, subinteg)
-            outer_integrator.force_stepfail = true
+        idxs = outer.child_solution_indices[i]
+        sync = outer.child_synchronizers[i]
+
+        @timeit_debug "sync ->" forward_sync_subintegrator!(outer, child, idxs, sync)
+        @timeit_debug "time solve" _do_step!(outer, child, tnext)
+        if _child_failed(child)
+            outer.force_stepfail = true
             return
         end
+        backward_sync_subintegrator!(outer, child, idxs, sync)
     end
 end
 
 # ---------------------------------------------------------------------------
-# advance_solution_to! for a SplitSubIntegrator node with LieTrotterGodunov
-# This is the recursive dispatch when a SplitSubIntegrator's own cache is LTG.
-# ---------------------------------------------------------------------------
-@inline @unroll function advance_solution_to!(
-        outer_integrator::OperatorSplittingIntegrator,
-        sub::SplitSubIntegrator,
-        subintegrators::Tuple,
-        solution_indices::Tuple,
-        synchronizers::Tuple,
-        cache::LieTrotterGodunovCache,
-        tnext
-    )
-    (; inner_caches) = cache
-    i = 0
-    @unroll for subinteg in subintegrators
-        i += 1
-        synchronizer = synchronizers[i]
-        idxs = solution_indices[i]
-        inner_cache = inner_caches[i]
-
-        @timeit_debug "sync ->" forward_sync_subintegrator!(
-            outer_integrator, subinteg, idxs, synchronizer
-        )
-        @timeit_debug "time solve" _advance_child!(
-            outer_integrator, subinteg, inner_cache, tnext
-        )
-        if _child_failed(outer_integrator, subinteg)
-            sub.status = SplitSubIntegratorStatus(ReturnCode.Failure)
-            return
-        end
-        backward_sync_subintegrator!(outer_integrator, subinteg, idxs, synchronizer)
-    end
-    # All children succeeded: mark this node as successful
-    sub.status = SplitSubIntegratorStatus(ReturnCode.Success)
-    # Accept the sub-step: copy u into uprev for potential future rollback
-    accept_step!(sub)
-    sub.t = tnext
-    sub.iter += 1
-end
-
-# ---------------------------------------------------------------------------
-# _advance_child!: dispatch on child type
+# _do_step!: pure integration, no sync.
+# The caller (advance_children_*) owns forward/backward sync around this.
 # ---------------------------------------------------------------------------
 
-# Child is a SplitSubIntegrator: call its own advance_solution_to!
-function _advance_child!(
-        outer_integrator::OperatorSplittingIntegrator,
-        child::SplitSubIntegrator,
-        _inner_cache,   # ignored — child uses its own cache
-        tnext
-    )
-    # Forward sync from the outer master u into this child's u
-    forward_sync_subintegrator!(
-        outer_integrator, child, child.solution_indices, NoExternalSynchronization()
-    )
-    advance_solution_to!(outer_integrator, child, tnext)
-    backward_sync_subintegrator!(
-        outer_integrator, child, child.solution_indices, NoExternalSynchronization()
-    )
-end
-
-# Child is a leaf DEIntegrator
-function _advance_child!(
-        outer_integrator::OperatorSplittingIntegrator,
+# Leaf: DEIntegrator
+function _do_step!(
+        outer::OperatorSplittingIntegrator,
         child::DEIntegrator,
-        _inner_cache,
         tnext
     )
     dt = tnext - child.t
     SciMLBase.step!(child, dt, true)
-    # If the leaf adaptive integrator failed unrecoverably, error immediately
+
+    # Unrecoverable failure: error immediately regardless of adaptive/non-adaptive
     if !SciMLBase.successful_retcode(child.sol.retcode) &&
             child.sol.retcode != ReturnCode.Default
-        if isadaptive(child)
-            error("Adaptive inner integrator failed unrecoverably with retcode $(child.sol.retcode). Aborting.")
-        end
-        # non-adaptive failure: signal to parent
+        error("Inner integrator failed unrecoverably with retcode \
+               $(child.sol.retcode) at t=$(child.t). Aborting.")
+    end
+    return nothing
+end
+
+# Intermediate: SplitSubIntegrator — recurse
+function _do_step!(
+        outer::OperatorSplittingIntegrator,
+        sub::SplitSubIntegrator,
+        tnext
+    )
+    # Sync sub's children among themselves before recursing.
+    # (The parent already synced sub.u from master u via forward_sync before
+    # calling _do_step!; here we propagate sub.dt down to sub's own children.)
+    _sync_sub_children!(sub)
+    advance_solution_to!(outer, sub, tnext)
+    return nothing
+end
+
+# Propagate time-step information from sub to its own children
+function _sync_sub_children!(sub::SplitSubIntegrator)
+    _sync_sub_children_tuple!(sub.child_subintegrators, sub)
+end
+
+@unroll function _sync_sub_children_tuple!(children::Tuple, parent::SplitSubIntegrator)
+    @unroll for child in children
+        _sync_child_to_sub_parent!(child, parent)
+    end
+end
+
+function _sync_child_to_sub_parent!(child::DEIntegrator, parent::SplitSubIntegrator)
+    @assert child.t == parent.t "($(child.t) != $(parent.t))"
+    if !isadaptive(child) && child.dtchangeable
+        SciMLBase.set_proposed_dt!(child, parent.dt)
+    end
+end
+
+function _sync_child_to_sub_parent!(child::SplitSubIntegrator, parent::SplitSubIntegrator)
+    @assert child.t == parent.t "($(child.t) != $(parent.t))"
+    if !isadaptive(child)
+        SciMLBase.set_proposed_dt!(child, parent.dt)
     end
 end
 
 # ---------------------------------------------------------------------------
 # _child_failed: check whether a child reported a failure
 # ---------------------------------------------------------------------------
-function _child_failed(outer_integrator, child::DEIntegrator)
-    return child.sol.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
-end
+_child_failed(child::DEIntegrator) =
+    child.sol.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
 
-function _child_failed(outer_integrator, child::SplitSubIntegrator)
-    return child.status.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
-end
+_child_failed(child::SplitSubIntegrator) =
+    child.status.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
