@@ -11,13 +11,15 @@ import SciMLBase: DEIntegrator, NullParameters, isadaptive
 
 import RecursiveArrayTools
 
-import OrdinaryDiffEqCore
+import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isdtchangeable,
+    stepsize_controller!, step_accept_controller!, step_reject_controller!
 
 abstract type AbstractOperatorSplitFunction <: SciMLBase.AbstractODEFunction{true} end
 abstract type AbstractOperatorSplittingAlgorithm end
 abstract type AbstractOperatorSplittingCache end
 
 @inline SciMLBase.isadaptive(::AbstractOperatorSplittingAlgorithm) = false
+@inline isdtchangeable(alg::AbstractOperatorSplittingAlgorithm) = all(isdtchangeable.(alg.inner_algs))
 
 include("function.jl")
 include("problem.jl")

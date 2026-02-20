@@ -6,7 +6,7 @@ import SciMLBase: ReturnCode
 import DiffEqBase: DiffEqBase, ODEFunction, ODEProblem
 using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqTsit5
-using ModelingToolkit
+using ModelingToolkit, SciCompDSL
 
 # ---------------------------------------------------------------------------
 # Reference problem
@@ -120,46 +120,34 @@ end
         cache::FakeAdaptiveAlgorithmCache
     ) = DiffEqBase.get_tmp_cache(integrator, alg, cache.cache)
 
-@inline function OS.advance_solution_to!(
+@inline function OS.advance_solution_by!(
         outer_integrator::OS.OperatorSplittingIntegrator,
         subintegrators::Tuple,
         cache::FakeAdaptiveAlgorithmCache,
-        tnext
+        dt
     )
-    return OS.advance_solution_to!(
-        outer_integrator, subintegrators, cache.cache, tnext
+    return OS.advance_solution_by!(
+        outer_integrator, subintegrators, cache.cache, dt
     )
 end
 
 # For SplitSubIntegrator nodes whose cache was wrapped by FakeAdaptiveAlgorithmCache
-@inline function OS.advance_solution_to!(
+@inline function OS.advance_solution_by!(
         outer_integrator::OS.OperatorSplittingIntegrator,
         sub::OS.SplitSubIntegrator,
         subintegrators::Tuple,
         solution_indices::Tuple,
         synchronizers::Tuple,
         cache::FakeAdaptiveAlgorithmCache,
-        tnext
+        dt
     )
-    return OS.advance_solution_to!(
+    return OS.advance_solution_by!(
         outer_integrator, sub, subintegrators, solution_indices,
-        synchronizers, cache.cache, tnext
+        synchronizers, cache.cache, dt
     )
 end
 
 FakeAdaptiveLTG(inner) = FakeAdaptiveAlgorithm(LieTrotterGodunov(inner))
-
-# ---------------------------------------------------------------------------
-# Helper: given the outer integrator, walk into the first SplitSubIntegrator
-# and find the first leaf DEIntegrator.
-# ---------------------------------------------------------------------------
-function first_leaf_integrator(integrator)
-    node = integrator.subintegrator_tree[1]
-    while node isa OS.SplitSubIntegrator
-        node = node.subintegrator_tree[1]
-    end
-    return node
-end
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -214,7 +202,7 @@ end
             @test integrator.iter == nsteps
 
             # SplitSubIntegrators now carry t and iter at each level
-            sub1 = integrator.subintegrator_tree[1]
+            sub1 = integrator.child_subintegrators[1]
             @test sub1.t ≈ tspan[2]
             @test sub1.iter == nsteps
 

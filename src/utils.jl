@@ -61,8 +61,9 @@ function forward_sync_subintegrator!(
         solution_indices,
         sync
     )
-    _forward_sync_internal_leaf!(parent.u, child, solution_indices)
-    return forward_sync_external!(parent, child, sync)
+    forward_sync_internal!(parent.u, child, solution_indices)
+    forward_sync_external!(parent, child, sync)
+    return nothing
 end
 
 # Parent = outermost OperatorSplittingIntegrator, child = SplitSubIntegrator
@@ -88,7 +89,7 @@ function forward_sync_subintegrator!(
     )
     # parent.u is this level's buffer; solution_indices are relative to
     # the master u.  We read from the master via u_master.
-    _forward_sync_internal_leaf!(parent.u_master, child, solution_indices)
+    forward_sync_internal!(parent.u_master, child, solution_indices)
     forward_sync_external!(parent, child, sync)
     return nothing
 end
@@ -108,7 +109,7 @@ function forward_sync_subintegrator!(
 end
 
 # Shared internal helper: copy master u slice → leaf DEIntegrator u/uprev
-function _forward_sync_internal_leaf!(u_source, child::DEIntegrator, solution_indices)
+function forward_sync_internal!(u_source, child::DEIntegrator, solution_indices)
     @views usrc = u_source[solution_indices]
     sync_vectors!(child.uprev, usrc)
     sync_vectors!(child.u,     usrc)
@@ -216,3 +217,45 @@ function synchronize_solution_with_parameters!(
     )
     return nothing
 end
+
+# Time stuff
+function OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator::AnySplitIntegrator)
+    if tdir(integrator) > 0
+        integrator.dt = min(integrator.opts.dtmax, integrator.dt)
+    else
+        integrator.dt = max(integrator.opts.dtmax, integrator.dt)
+    end
+    dtmin = OrdinaryDiffEqCore.timedepentdtmin(integrator)
+    if tdir(integrator) > 0
+        integrator.dt = max(integrator.dt, dtmin)
+    else
+        integrator.dt = min(integrator.dt, dtmin)
+    end
+    return nothing
+end
+
+# Check time-step information consistency
+validate_time_point(integrator::AnySplitIntegrator) = validate_time_point(integrator, integrator.child_subintegrators)
+function validate_time_point(parent, child::SplitSubIntegrator)
+    @assert parent.t == child.t "(parent.t=$(parent.t) != child.t=$(child.t))"
+    validate_time_point(child, child.child_subintegrators)
+end
+
+@unroll function validate_time_point(parent, children::Tuple)
+    @unroll for child in children
+        validate_time_point(parent, child)
+    end
+end
+
+function validate_time_point(parent, child::DEIntegrator)
+    @assert child.t == parent.t "(parent.t=$(parent.t) != child.t=$(child.t))"
+end
+
+# ---------------------------------------------------------------------------
+# _child_failed: check whether a child reported a failure
+# ---------------------------------------------------------------------------
+_child_failed(child::DEIntegrator) =
+    child.sol.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
+
+_child_failed(child::SplitSubIntegrator) =
+    child.status.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
