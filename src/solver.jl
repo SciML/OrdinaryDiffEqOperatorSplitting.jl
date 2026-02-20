@@ -11,6 +11,16 @@ struct LieTrotterGodunov{AlgTupleType} <: AbstractOperatorSplittingAlgorithm
     inner_algs::AlgTupleType
 end
 
+function Base.show(io::IO, alg::LieTrotterGodunov)
+    print(io, "LTG (")
+    for inner_alg in alg.inner_algs[1:end-1]
+        Base.show(io, inner_alg)
+        print(io, " -> ")
+    end
+    length(alg.inner_algs) > 0 && Base.show(io, alg.inner_algs[end])
+    print(io, ")")
+end
+
 struct LieTrotterGodunovCache{uType, uprevType, iiType} <: AbstractOperatorSplittingCache
     u::uType
     uprev::uprevType
