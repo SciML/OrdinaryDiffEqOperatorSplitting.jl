@@ -24,7 +24,7 @@ function gsf_recursive_function_type_safety_check(f::GenericSplitFunction)
 end
 
 function gsf_recursive_function_type_safety_check(dunno)
-    error("Failed to construct GenericSplitFunction. One of the inner functions is of type $(typeof(dunno)) which is not a subtype of SciMLBase.AbstractDiffEqFunction.")
+    @warn "One of the inner functions in GenericSplitFunction is of type $(typeof(dunno)) which is not a subtype of SciMLBase.AbstractDiffEqFunction."
 end
 
 function gsf_recursive_function_type_safety_check(::SciMLBase.AbstractDiffEqFunction)
