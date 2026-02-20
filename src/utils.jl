@@ -158,9 +158,6 @@ function backward_sync_subintegrator!(
     )
     @views umaster = parent.u_master[solution_indices]
     sync_vectors!(umaster, child.u)
-    # Also keep parent.u consistent
-    @views ulocal = parent.u[solution_indices .- first(parent.solution_indices) .+ 1]
-    sync_vectors!(ulocal, child.u)
     return backward_sync_external!(parent, child, sync)
 end
 
@@ -173,8 +170,6 @@ function backward_sync_subintegrator!(
     )
     @views umaster = parent.u_master[solution_indices]
     sync_vectors!(umaster, child.u)
-    @views ulocal = parent.u[solution_indices .- first(parent.solution_indices) .+ 1]
-    sync_vectors!(ulocal, child.u)
     return backward_sync_external!(parent, child, sync)
 end
 

@@ -74,11 +74,11 @@ testsys2 = mtkcompile(testmodel2; sort_eqs = false)
 # build_subintegrator_tree_with_cache.  It just wraps the standard cache in
 # its own FakeAdaptiveAlgorithmCache.
 # ---------------------------------------------------------------------------
-struct FakeAdaptiveAlgorithm{T} <: OS.AbstractOperatorSplittingAlgorithm
+struct FakeAdaptiveAlgorithm{T,T2} <: OS.AbstractOperatorSplittingAlgorithm
     alg::T
-    inner_algs::T   # delegate inner_algs to the wrapped algorithm
+    inner_algs::T2   # delegate inner_algs to the wrapped algorithm
 end
-FakeAdaptiveAlgorithm(alg::T) where {T} = FakeAdaptiveAlgorithm{T}(alg, alg.inner_algs)
+FakeAdaptiveAlgorithm(alg) = FakeAdaptiveAlgorithm(alg, alg.inner_algs)
 
 struct FakeAdaptiveAlgorithmCache{T} <: OS.AbstractOperatorSplittingCache
     cache::T
