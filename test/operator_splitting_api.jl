@@ -6,7 +6,7 @@ import SciMLBase: ReturnCode
 import DiffEqBase: DiffEqBase, ODEFunction, ODEProblem
 using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqTsit5
-using ModelingToolkit, SciCompDSL
+using ModelingToolkit
 
 # ---------------------------------------------------------------------------
 # Reference problem
