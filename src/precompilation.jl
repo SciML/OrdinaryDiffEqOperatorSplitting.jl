@@ -38,6 +38,6 @@ end
 
     # Precompile init and a few steps
     integrator = DiffEqBase.init(prob, tstepper, dt = 0.01, verbose = false)
-    # step!(integrator)
-    # solve!(integrator)
+    step!(integrator)
+    solve!(integrator)
 end
