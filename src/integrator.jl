@@ -452,7 +452,7 @@ function reject_step!(integrator::AnySplitIntegrator)
 end
 function reject_step!(integrator::AnySplitIntegrator, cache, controller)
     integrator.u .= integrator.uprev
-    # TODO: roll back sub-integrators
+    rollback_children!(integrator)
     return nothing
 end
 function reject_step!(integrator::AnySplitIntegrator, cache, ::Nothing)
@@ -495,6 +495,7 @@ end
 # Roll back each child's local buffer to match master u.
 # For DEIntegrators the leaf will be re-synced via forward_sync before the
 # next attempt, so there is nothing to do here.
+rollback_children!(integrator::OperatorSplittingIntegrator) = rollback_children!(integrator.child_subintegrators, integrator.u)
 @unroll function rollback_children!(children::Tuple, u_master)
     @unroll for child in children
         rollback_child!(child, u_master)
