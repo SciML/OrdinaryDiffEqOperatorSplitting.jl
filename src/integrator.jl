@@ -202,6 +202,7 @@ function SciMLBase.__init(
         advance_to_tstop = false,
         adaptive = isadaptive(alg),
         controller = nothing,
+        # controller = OrdinaryDiffEqCore.PIController(0.14, 0.08),
         alias_u0 = false,
         verbose = true,
         kwargs...
@@ -383,7 +384,7 @@ function _subreinit_child!(
         kwargs...
     )
     idxs = sub.solution_indices
-    sub.u    .= @view u0[idxs]
+    sub.u     .= @view u0[idxs]
     sub.uprev .= @view u0[idxs]
     sub.t     = t0
     if dt !== nothing
@@ -763,15 +764,32 @@ end
     stepsize_controller!(integrator, integrator.alg)
     return nothing
 end
+@inline function stepsize_controller!(integrator::AnySplitIntegrator, alg::AbstractOperatorSplittingAlgorithm)
+    isadaptive(alg) || return nothing
+    #stepsize_controller!(integrator, integrator.controller)
+    return nothing
+end
 @inline function step_accept_controller!(integrator::AnySplitIntegrator)
     isadaptive(integrator.alg) || return nothing
-    step_accept_controller!(integrator, integrator.alg, nothing)
+    step_accept_controller!(integrator, integrator.alg)
+    return nothing
+end
+@inline function step_accept_controller!(integrator::AnySplitIntegrator, alg::AbstractOperatorSplittingAlgorithm)
+    isadaptive(alg) || return nothing
+    #step_accept_controller!(integrator, integrator.controller)
     return nothing
 end
 @inline function step_reject_controller!(integrator::AnySplitIntegrator)
     isadaptive(integrator.alg) || return nothing
-    return step_reject_controller!(integrator, integrator.alg, nothing)
+    step_reject_controller!(integrator, integrator.alg)
+    return nothing
 end
+@inline function step_reject_controller!(integrator::AnySplitIntegrator, alg::AbstractOperatorSplittingAlgorithm)
+    isadaptive(integrator.alg) || return nothing
+    # step_reject_controller!(integrator, integrator.controller)
+    return nothing
+end
+
 
 # Time helpers
 tdir(integrator) =
@@ -1044,7 +1062,7 @@ function _build_child(
         save_end = false,
         controller = nothing
     ) where {S, T, P, F}
-    u    = @view uouter[solution_indices]
+    u = uouter[solution_indices]
     prob2 = if p isa NullParameters
         SciMLBase.ODEProblem(f, u, (t0, tf))
     else
