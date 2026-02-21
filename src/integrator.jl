@@ -63,7 +63,7 @@ its children's synchronizers, solution indices, and sub-integrators.  It does
                               this level
 - `child_subintegrators`   — tuple of direct children (`SplitSubIntegrator` or
                               `DEIntegrator`)
-- `solution_indices`       — global indices (into master `u`) **owned by this node**
+- `solution_indices`       — global indices (into parent `u`) **owned by this node**
 - `child_solution_indices` — tuple of per-child global solution indices
 - `child_synchronizers`    — tuple of per-child synchronizer objects
 """
@@ -243,7 +243,7 @@ function SciMLBase.__init(
     sol      = SciMLBase.build_solution(prob, alg, tType[], uType[])
     callback = DiffEqBase.CallbackSet(callback)
 
-    child_subintegrators, cache = build_subintegrators(
+    child_subintegrators = build_subintegrators(
         prob, alg,
         uprev, u,
         u,            # u_master == u at the outermost level
@@ -251,6 +251,11 @@ function SciMLBase.__init(
         t0, dt, tf,
         tstops, saveat, d_discontinuities, callback,
         adaptive, verbose
+    )
+
+    cache = init_cache(
+        prob.f, alg;
+        uprev = uprev, u = u,
     )
 
     child_solution_indices  = ntuple(i -> prob.f.solution_indices[i],    length(prob.f.functions))
@@ -363,13 +368,9 @@ function _subreinit_child!(
     )
     if dt !== nothing && child.dtchangeable
         SciMLBase.set_proposed_dt!(child, dt)
+        # Reinit does not touch this, so we reset it manually.
+        set_dt!(child, dt)
     end
-    # solution_indices live on the parent SplitSubIntegrator (or on the outer
-    # integrator for top-level children) — they were baked into child at init.
-    # reinit! on an ODEIntegrator resets u from its prob.u0; we need to pass
-    # the correct slice here.  The parent calls us with the correct f_child
-    # but not the indices — those are embedded in child.sol.prob.u0 already
-    # because we constructed child with a view/copy of the right slice.
     return DiffEqBase.reinit!(child; kwargs...)
 end
 
@@ -383,12 +384,10 @@ function _subreinit_child!(
         dt,
         kwargs...
     )
-    idxs = sub.solution_indices
-    sub.u     .= @view u0[idxs]
-    sub.uprev .= @view u0[idxs]
-    sub.t     = t0
+    sub.t = t0
     if dt !== nothing
         SciMLBase.set_proposed_dt!(sub, dt)
+        set_dt!(sub, dt)
     end
     sub.iter             = 0
     sub.force_stepfail   = false
@@ -823,7 +822,7 @@ end
 
 function __step!(integrator::AnySplitIntegrator)
     advance_solution_by!(integrator, integrator.dt)
-    stepsize_controller!(integrator)
+    stepsize_controller!(integrator) # FIXME this should go into the footer
     return nothing
 end
 
@@ -940,7 +939,7 @@ function build_subintegrators(
     )
     (; f, p) = prob
 
-    results = ntuple(
+    child_subintegrators = ntuple(
         i -> _build_child(
             prob,
             alg.inner_algs[i],
@@ -955,16 +954,7 @@ function build_subintegrators(
         length(f.functions)
     )
 
-    child_subintegrators = ntuple(i -> results[i][1], length(f.functions))
-    child_caches         = ntuple(i -> results[i][2], length(f.functions))
-
-    cache = init_cache(
-        f, alg;
-        uprev = uprevouter, u = uouter, alias_u = true,
-        inner_caches = child_caches
-    )
-
-    return child_subintegrators, cache
+    return child_subintegrators
 end
 
 # Intermediate node: inner alg is an AbstractOperatorSplittingAlgorithm and
@@ -986,8 +976,8 @@ function _build_child(
     )
     tType = typeof(dt)
 
-    # Recurse: build each grandchild
-    grandchild_results = ntuple(
+    # Recurse: build each consecutive child
+    child_subintegrators = ntuple(
         i -> _build_child(
             prob,
             alg.inner_algs[i],
@@ -1002,8 +992,6 @@ function _build_child(
         length(f.functions)
     )
 
-    child_subintegrators    = ntuple(i -> grandchild_results[i][1], length(f.functions))
-    child_caches            = ntuple(i -> grandchild_results[i][2], length(f.functions))
     child_solution_indices  = ntuple(i -> f.solution_indices[i],    length(f.functions))
     child_synchronizers     = ntuple(i -> f.synchronizers[i],       length(f.functions))
 
@@ -1017,7 +1005,6 @@ function _build_child(
     level_cache = init_cache(
         f, alg;
         uprev = uprev_sub, u = u_sub,
-        inner_caches = child_caches
     )
 
     EEst_val = isadaptive(alg) ? one(tType) : tType(NaN)
@@ -1045,7 +1032,7 @@ function _build_child(
         one(tType),
     )
 
-    return sub, level_cache
+    return sub
 end
 
 # Leaf node: inner alg is a plain SciMLBase.AbstractODEAlgorithm
@@ -1080,7 +1067,7 @@ function _build_child(
         advance_to_tstop = false,
         adaptive, controller, verbose
     )
-    return integrator, integrator.cache
+    return integrator
 end
 
 # ---------------------------------------------------------------------------
@@ -1093,7 +1080,7 @@ SciMLBase.first_tstop(i::AnySplitIntegrator)  = first(i.tstops)
 SciMLBase.pop_tstop!(i::AnySplitIntegrator)   = pop!(i.tstops)
 
 DiffEqBase.get_dt(i::AnySplitIntegrator) = i.dt
-function set_dt!(i::AnySplitIntegrator, dt)
+function set_dt!(i::DiffEqBase.DEIntegrator, dt)
     dt <= zero(dt) && error("dt must be positive")
     return i.dt = dt
 end

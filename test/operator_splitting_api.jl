@@ -154,7 +154,7 @@ end
     prob1a = OperatorSplittingProblem(fsplit1a, u0, tspan)
     prob1b = OperatorSplittingProblem(fsplit1b, u0, tspan)
 
-    f3dofs = [1, 3]
+    f3dofs = [1, 2]
     fsplit2_inner = GenericSplitFunction((f3, f3), (f3dofs, f3dofs))
     fsplit2_outer = GenericSplitFunction((f1, fsplit2_inner), (f1dofs, f2dofs))
 
@@ -243,6 +243,8 @@ end
             @test integrator.iter == nsteps
 
             DiffEqBase.reinit!(integrator; dt = dt)
+            @test integrator.dt == dt
+            @test integrator.dt == integrator.dtcache
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
             for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
             end

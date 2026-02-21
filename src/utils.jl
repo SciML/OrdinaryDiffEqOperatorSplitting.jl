@@ -54,9 +54,8 @@ end
 # solution into the child and applies any external parameter synchronisation.
 # ---------------------------------------------------------------------------
 
-# Parent = outermost OperatorSplittingIntegrator, child = DEIntegrator
 function forward_sync_subintegrator!(
-        parent::OperatorSplittingIntegrator,
+        parent::AnySplitIntegrator,
         child::DEIntegrator,
         solution_indices,
         sync
@@ -66,53 +65,11 @@ function forward_sync_subintegrator!(
     return nothing
 end
 
-# Parent = outermost OperatorSplittingIntegrator, child = SplitSubIntegrator
-function forward_sync_subintegrator!(
-        parent::OperatorSplittingIntegrator,
-        child::SplitSubIntegrator,
-        solution_indices,
-        sync
-    )
-    @views uparent = parent.u[solution_indices]
-    sync_vectors!(child.u,     uparent)
-    sync_vectors!(child.uprev, uparent)
-    forward_sync_external!(parent, child, sync)
-    return nothing
-end
-
-# Parent = SplitSubIntegrator, child = DEIntegrator
-function forward_sync_subintegrator!(
-        parent::SplitSubIntegrator,
-        child::DEIntegrator,
-        solution_indices,
-        sync
-    )
-    # parent.u is this level's buffer; solution_indices are relative to
-    # the master u.  We read from the master via u_master.
-    forward_sync_internal!(parent.u_master, child, solution_indices)
-    forward_sync_external!(parent, child, sync)
-    return nothing
-end
-
-# Parent = SplitSubIntegrator, child = SplitSubIntegrator
-function forward_sync_subintegrator!(
-        parent::SplitSubIntegrator,
-        child::SplitSubIntegrator,
-        solution_indices,
-        sync
-    )
-    @views umaster = parent.u_master[solution_indices]
-    sync_vectors!(child.u,     umaster)
-    sync_vectors!(child.uprev, umaster)
-    forward_sync_external!(parent, child, sync)
-    return nothing
-end
-
 # Shared internal helper: copy master u slice → leaf DEIntegrator u/uprev
 function forward_sync_internal!(u_source, child::DEIntegrator, solution_indices)
     @views usrc = u_source[solution_indices]
-    sync_vectors!(child.uprev, usrc)
     sync_vectors!(child.u,     usrc)
+    sync_vectors!(child.uprev, child.u)
     SciMLBase.u_modified!(child, true)
     return nothing
 end
@@ -124,53 +81,16 @@ end
 # state back into the master solution vector.
 # ---------------------------------------------------------------------------
 
-# Parent = outermost OperatorSplittingIntegrator, child = DEIntegrator
 function backward_sync_subintegrator!(
-        parent::OperatorSplittingIntegrator,
+        parent::AnySplitIntegrator,
         child::DEIntegrator,
         solution_indices,
         sync
     )
-    @views uparent = parent.u[solution_indices]
-    sync_vectors!(uparent, child.u)
+    @views udst = parent.u[solution_indices]
+    sync_vectors!(udst, child.u)
     backward_sync_external!(parent, child, sync)
     return nothing
-end
-
-# Parent = outermost OperatorSplittingIntegrator, child = SplitSubIntegrator
-function backward_sync_subintegrator!(
-        parent::OperatorSplittingIntegrator,
-        child::SplitSubIntegrator,
-        solution_indices,
-        sync
-    )
-    @views uparent = parent.u[solution_indices]
-    sync_vectors!(uparent, child.u)
-    return backward_sync_external!(parent, child, sync)
-end
-
-# Parent = SplitSubIntegrator, child = DEIntegrator
-function backward_sync_subintegrator!(
-        parent::SplitSubIntegrator,
-        child::DEIntegrator,
-        solution_indices,
-        sync
-    )
-    @views umaster = parent.u_master[solution_indices]
-    sync_vectors!(umaster, child.u)
-    return backward_sync_external!(parent, child, sync)
-end
-
-# Parent = SplitSubIntegrator, child = SplitSubIntegrator
-function backward_sync_subintegrator!(
-        parent::SplitSubIntegrator,
-        child::SplitSubIntegrator,
-        solution_indices,
-        sync
-    )
-    @views umaster = parent.u_master[solution_indices]
-    sync_vectors!(umaster, child.u)
-    return backward_sync_external!(parent, child, sync)
 end
 
 # ---------------------------------------------------------------------------

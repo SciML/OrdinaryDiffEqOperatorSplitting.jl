@@ -21,26 +21,20 @@ function Base.show(io::IO, alg::LieTrotterGodunov)
     print(io, ")")
 end
 
-struct LieTrotterGodunovCache{uType, uprevType, iiType} <: AbstractOperatorSplittingCache
+struct LieTrotterGodunovCache{uType, uprevType} <: AbstractOperatorSplittingCache
     u::uType
     uprev::uprevType
-    inner_caches::iiType
 end
 
 function init_cache(
         f::GenericSplitFunction, alg::LieTrotterGodunov;
         uprev::AbstractArray, u::AbstractVector,
-        inner_caches,
-        alias_uprev = true,
-        alias_u = false
     )
-    _uprev = alias_uprev ? uprev : RecursiveArrayTools.recursivecopy(uprev)
-    _u     = alias_u     ? u     : RecursiveArrayTools.recursivecopy(u)
-    return LieTrotterGodunovCache(_u, _uprev, inner_caches)
+    return LieTrotterGodunovCache(u, uprev)
 end
 
 @unroll function _perform_step!(
-    outer,
+    parent,
     children::Tuple,
     cache::LieTrotterGodunovCache,
     dt
@@ -48,15 +42,17 @@ end
     i = 0
     @unroll for child in children
         i += 1
-        idxs = outer.child_solution_indices[i]
-        sync = outer.child_synchronizers[i]
 
-        @timeit_debug "sync ->" forward_sync_subintegrator!(outer, child, idxs, sync)
-        @timeit_debug "time solve" advance_solution_by!(outer, child, dt)
+        idxs = parent.child_solution_indices[i]
+        sync = parent.child_synchronizers[i]
+
+        @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
+        @timeit_debug "time solve" advance_solution_by!(parent, child, dt)
         if _child_failed(child)
-            outer.force_stepfail = true
+            parent.force_stepfail = true
             return
         end
-        backward_sync_subintegrator!(outer, child, idxs, sync)
+
+        backward_sync_subintegrator!(parent, child, idxs, sync)
     end
 end
