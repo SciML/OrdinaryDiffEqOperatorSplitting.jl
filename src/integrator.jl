@@ -112,9 +112,6 @@ end
 
 tdir(integrator::SplitSubIntegrator) = sign(integrator.dt)
 
-@inline SciMLBase.has_tstop(::SplitSubIntegrator) = true
-@inline SciMLBase.isadaptive(sub::SplitSubIntegrator) = isadaptive(sub.alg)
-
 # proposed-dt interface (mirrors ODEIntegrator)
 function SciMLBase.set_proposed_dt!(sub::SplitSubIntegrator, dt)
     if sub.dtcache != dt  # only touch if actually changing
@@ -1099,4 +1096,5 @@ function DiffEqBase.add_saveat!(i::OperatorSplittingIntegrator, t)
     return nothing
 end
 
-DiffEqBase.u_modified!(i::AnySplitIntegrator, bool) = nothing
+DiffEqBase.u_modified!(i::OperatorSplittingIntegrator, bool) = i.u_modified = bool
+DiffEqBase.u_modified!(i::SplitSubIntegrator, bool) = i.u_modified = bool

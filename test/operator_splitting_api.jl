@@ -74,7 +74,7 @@ testsys2 = mtkcompile(testmodel2; sort_eqs = false)
 # build_subintegrator_tree_with_cache.  It just wraps the standard cache in
 # its own FakeAdaptiveAlgorithmCache.
 # ---------------------------------------------------------------------------
-struct FakeAdaptiveAlgorithm{T,T2} <: OS.AbstractOperatorSplittingAlgorithm
+struct FakeAdaptiveAlgorithm{T, T2} <: OS.AbstractOperatorSplittingAlgorithm
     alg::T
     inner_algs::T2   # delegate inner_algs to the wrapped algorithm
 end
@@ -120,34 +120,25 @@ end
         cache::FakeAdaptiveAlgorithmCache
     ) = DiffEqBase.get_tmp_cache(integrator, alg, cache.cache)
 
-@inline function OS.advance_solution_by!(
-        outer_integrator::OS.OperatorSplittingIntegrator,
+@inline function OS._perform_step!(
+        outer_integrator,
         subintegrators::Tuple,
         cache::FakeAdaptiveAlgorithmCache,
         dt
     )
-    return OS.advance_solution_by!(
+    return OS._perform_step!(
         outer_integrator, subintegrators, cache.cache, dt
     )
 end
 
-# For SplitSubIntegrator nodes whose cache was wrapped by FakeAdaptiveAlgorithmCache
-@inline function OS.advance_solution_by!(
-        outer_integrator::OS.OperatorSplittingIntegrator,
-        sub::OS.SplitSubIntegrator,
-        subintegrators::Tuple,
-        solution_indices::Tuple,
-        synchronizers::Tuple,
-        cache::FakeAdaptiveAlgorithmCache,
-        dt
-    )
-    return OS.advance_solution_by!(
-        outer_integrator, sub, subintegrators, solution_indices,
-        synchronizers, cache.cache, dt
-    )
+FakeAdaptiveLTG(inner) = FakeAdaptiveAlgorithm(LieTrotterGodunov(inner))
+
+function Base.show(io::IO, alg::FakeAdaptiveAlgorithm)
+    print(io, "FAKE (")
+    Base.show(io, alg.alg)
+    print(io, ")")
 end
 
-FakeAdaptiveLTG(inner) = FakeAdaptiveAlgorithm(LieTrotterGodunov(inner))
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -172,7 +163,7 @@ FakeAdaptiveLTG(inner) = FakeAdaptiveAlgorithm(LieTrotterGodunov(inner))
     nsteps = ceil(Int, (tspan[2] - tspan[1]) / dt)
 
     for TimeStepperType in (LieTrotterGodunov, FakeAdaptiveLTG)
-        @testset "Solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
+        @testset "$tstepper" for (prob, tstepper) in (
                 (prob1a, TimeStepperType((Euler(), Euler()))),
                 (prob1a, TimeStepperType((Tsit5(), Euler()))),
                 (prob1a, TimeStepperType((Euler(), Tsit5()))),
