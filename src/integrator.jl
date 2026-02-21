@@ -15,9 +15,7 @@ Base.@kwdef mutable struct IntegratorOptions{tType, fType, F3}
     isoutofdomain::F3 = DiffEqBase.ODE_DEFAULT_ISOUTOFDOMAIN
 end
 
-# ---------------------------------------------------------------------------
-# SplitSubIntegratorStatus
-# ---------------------------------------------------------------------------
+
 """
     SplitSubIntegratorStatus
 
@@ -31,9 +29,7 @@ end
 
 SplitSubIntegratorStatus() = SplitSubIntegratorStatus(ReturnCode.Default)
 
-# ---------------------------------------------------------------------------
-# SplitSubIntegrator
-# ---------------------------------------------------------------------------
+
 """
     SplitSubIntegrator <: AbstractODEIntegrator
 
@@ -123,9 +119,7 @@ function SciMLBase.set_proposed_dt!(sub::SplitSubIntegrator, dt)
     return nothing
 end
 
-# ---------------------------------------------------------------------------
-# OperatorSplittingIntegrator
-# ---------------------------------------------------------------------------
+
 """
     OperatorSplittingIntegrator <: AbstractODEIntegrator
 
@@ -439,8 +433,6 @@ end
 
 notify_integrator_hit_tstop!(integrator::AnySplitIntegrator) = nothing
 
-is_first_iteration(integrator::AnySplitIntegrator)  = integrator.iter == 0
-increment_iteration(integrator::AnySplitIntegrator) = integrator.iter += 1
 
 # ---------------------------------------------------------------------------
 # Step accept/reject
@@ -530,6 +522,9 @@ function step_header!(integrator::AnySplitIntegrator)
     integrator.force_stepfail = false
     return nothing
 end
+
+is_first_iteration(integrator::AnySplitIntegrator)  = integrator.iter == 0
+increment_iteration(integrator::AnySplitIntegrator) = integrator.iter += 1
 
 function footer_reset_flags!(integrator)
     integrator.u_modified = false
@@ -738,9 +733,6 @@ end
 _child_retcode(child::DEIntegrator)       = SciMLBase.check_error(child)
 _child_retcode(child::SplitSubIntegrator) = child.status.retcode
 
-# ---------------------------------------------------------------------------
-# Internal step
-# ---------------------------------------------------------------------------
 function setup_u(prob::OperatorSplittingProblem, solver, alias_u0)
     alias_u0 ? prob.u0 : RecursiveArrayTools.recursivecopy(prob.u0)
 end

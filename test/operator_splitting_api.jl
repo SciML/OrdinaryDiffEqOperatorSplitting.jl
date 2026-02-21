@@ -67,13 +67,7 @@ end
 @named testmodel2 = TestModelODE2()
 testsys2 = mtkcompile(testmodel2; sort_eqs = false)
 
-# ---------------------------------------------------------------------------
-# FakeAdaptiveAlgorithm — tests adaptive code path
-#
-# With the new interface FakeAdaptiveAlgorithm no longer needs to override
-# build_subintegrator_tree_with_cache.  It just wraps the standard cache in
-# its own FakeAdaptiveAlgorithmCache.
-# ---------------------------------------------------------------------------
+# Test whether adaptive code path works in principle
 struct FakeAdaptiveAlgorithm{T, T2} <: OS.AbstractOperatorSplittingAlgorithm
     alg::T
     inner_algs::T2   # delegate inner_algs to the wrapped algorithm
@@ -146,6 +140,9 @@ end
 @testset "reinit and convergence" begin
     dt = 0.01π
 
+    # Here we describe index sets f1dofs and f2dofs that map the
+    # local indices in f1 and f2 into the global problem. Just put
+    # ode_true and ode1/ode2 side by side to see how they connect.
     f1dofs = [1, 2, 3]
     f2dofs = [1, 3]
     fsplit1a = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
@@ -153,7 +150,9 @@ end
 
     prob1a = OperatorSplittingProblem(fsplit1a, u0, tspan)
     prob1b = OperatorSplittingProblem(fsplit1b, u0, tspan)
-
+    
+    # Note that we define the dof indices w.r.t the parent function.
+    # Hence the indices for `fsplit2_inner` are.
     f3dofs = [1, 2]
     fsplit2_inner = GenericSplitFunction((f3, f3), (f3dofs, f3dofs))
     fsplit2_outer = GenericSplitFunction((f1, fsplit2_inner), (f1dofs, f2dofs))
@@ -184,6 +183,9 @@ end
             )
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
 
+            sub1 = integrator.child_subintegrators[1]
+            sub2 = integrator.child_subintegrators[2]
+
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
             ufinal = copy(integrator.u)
@@ -192,10 +194,11 @@ end
             @test integrator.dtcache ≈ dt
             @test integrator.iter == nsteps
 
-            # SplitSubIntegrators now carry t and iter at each level
-            sub1 = integrator.child_subintegrators[1]
             @test sub1.t ≈ tspan[2]
             @test sub1.iter == nsteps
+
+            @test sub2.t ≈ tspan[2]
+            @test sub2.iter == nsteps
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -222,6 +225,12 @@ end
             @test integrator.t ≈ tspan[2]
             @test integrator.dtcache ≈ dt
             @test integrator.iter == nsteps
+
+            @test sub1.t ≈ tspan[2]
+            @test sub1.iter == nsteps
+
+            @test sub2.t ≈ tspan[2]
+            @test sub2.iter == nsteps
         end
     end
 

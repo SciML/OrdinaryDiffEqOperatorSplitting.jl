@@ -8,7 +8,7 @@ First-order sequential operator splitting algorithm attributed to
 [Lie:1880:tti,Tro:1959:psg,God:1959:dmn](@cite).
 """
 struct LieTrotterGodunov{AlgTupleType} <: AbstractOperatorSplittingAlgorithm
-    inner_algs::AlgTupleType
+    inner_algs::AlgTupleType # Tuple of timesteppers for inner problems
 end
 
 function Base.show(io::IO, alg::LieTrotterGodunov)

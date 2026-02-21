@@ -3,6 +3,7 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     FT = typeof(tf)
     ordering = tf > t0 ? DataStructures.FasterForward : DataStructures.FasterReverse
 
+    # ensure that tstops includes tf and only has values ahead of t0
     tstops = [filter(t -> t0 < t < tf || tf < t < t0, tstops)..., tf]
     tstops = DataStructures.BinaryHeap{FT, ordering}(tstops)
 
@@ -13,6 +14,8 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
         saveat = tf > t0 ? saveat : -saveat
         saveat = [t0:saveat:tf..., tf]
     else
+        # We do not need to filter saveat like tstops because the saving
+        # callback will ignore any times that are not between t0 and tf.
         saveat = collect(saveat)
     end
     saveat = DataStructures.BinaryHeap{FT, ordering}(saveat)
@@ -46,13 +49,14 @@ function sync_vectors!(a, b)
     return nothing
 end
 
-# ---------------------------------------------------------------------------
-# forward_sync_subintegrator!
-#
-# The *parent* (OperatorSplittingIntegrator or SplitSubIntegrator) calls this
-# before each child's step.  It copies the relevant slice of the master
-# solution into the child and applies any external parameter synchronisation.
-# ---------------------------------------------------------------------------
+"""
+    forward_sync_subintegrator!(parent_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+
+This function is responsible of copying the solution and parameters of the parent integrator and the synchronized subintegrators with the information given into the inner integrator.
+If the inner integrator is synchronized with other inner integrators using `sync`, the function `forward_sync_external!` shall be dispatched for `sync`.
+The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
+The `solution_indices` are indices into the parent integrators solution vectors.
+"""
 
 function forward_sync_subintegrator!(
         parent::AnySplitIntegrator,
@@ -74,12 +78,15 @@ function forward_sync_internal!(u_source, child::DEIntegrator, solution_indices)
     return nothing
 end
 
-# ---------------------------------------------------------------------------
-# backward_sync_subintegrator!
-#
-# The *parent* calls this after each child's step to copy the child's updated
-# state back into the master solution vector.
-# ---------------------------------------------------------------------------
+
+"""
+    backward_sync_subintegrator!(parent_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+
+This function is responsible of copying the solution of the inner integrator back into parent integrator and the synchronized subintegrators.
+If the inner integrator is synchronized with other inner integrators using `sync`, the function `backward_sync_external!` shall be dispatched for `sync`.
+The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
+The `solution_indices` are indices in the parent integrators solution vectors.
+"""
 
 function backward_sync_subintegrator!(
         parent::AnySplitIntegrator,
