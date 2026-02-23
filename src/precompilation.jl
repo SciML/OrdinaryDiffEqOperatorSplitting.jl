@@ -15,7 +15,7 @@ end
 
 function _precompile_ode3(du, u, p, t)
     du[1] = -0.01u[2]
-    du[2] = -0.01u[1]
+    return du[2] = -0.01u[1]
 end
 
 @compile_workload begin
@@ -31,7 +31,7 @@ end
     f2dofs = [1, 3]
     f3dofs = [2, 3]
     fsplitinner = GenericSplitFunction((f2, f3), (f2dofs, f3dofs))
-    fsplit = GenericSplitFunction((f1, fsplitinner), (f1dofs, [1,2,3]))
+    fsplit = GenericSplitFunction((f1, fsplitinner), (f1dofs, [1, 2, 3]))
 
     prob = OperatorSplittingProblem(fsplit, u0, tspan)
     tstepper = LieTrotterGodunov((Euler(), LieTrotterGodunov((Euler(), Euler()))))

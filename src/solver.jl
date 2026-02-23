@@ -13,12 +13,12 @@ end
 
 function Base.show(io::IO, alg::LieTrotterGodunov)
     print(io, "LTG (")
-    for inner_alg in alg.inner_algs[1:end-1]
+    for inner_alg in alg.inner_algs[1:(end - 1)]
         Base.show(io, inner_alg)
         print(io, " -> ")
     end
     length(alg.inner_algs) > 0 && Base.show(io, alg.inner_algs[end])
-    print(io, ")")
+    return print(io, ")")
 end
 
 struct LieTrotterGodunovCache{uType, uprevType} <: AbstractOperatorSplittingCache
@@ -34,11 +34,11 @@ function init_cache(
 end
 
 @unroll function _perform_step!(
-    parent,
-    children::Tuple,
-    cache::LieTrotterGodunovCache,
-    dt
-)
+        parent,
+        children::Tuple,
+        cache::LieTrotterGodunovCache,
+        dt
+    )
     i = 0
     @unroll for child in children
         i += 1

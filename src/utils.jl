@@ -33,9 +33,9 @@ might be that the vectors alias each other in memory.
 need_sync
 
 need_sync(a::AbstractVector, b::AbstractVector) = true
-need_sync(a::SubArray, b::AbstractVector)       = a.parent !== b
-need_sync(a::AbstractVector, b::SubArray)       = a !== b.parent
-need_sync(a::SubArray, b::SubArray)             = a.parent !== b.parent
+need_sync(a::SubArray, b::AbstractVector) = a.parent !== b
+need_sync(a::AbstractVector, b::SubArray) = a !== b.parent
+need_sync(a::SubArray, b::SubArray) = a.parent !== b.parent
 
 """
     sync_vectors!(a, b)
@@ -72,7 +72,7 @@ end
 # Shared internal helper: copy master u slice → leaf DEIntegrator u/uprev
 function forward_sync_internal!(u_source, child::DEIntegrator, solution_indices)
     @views usrc = u_source[solution_indices]
-    sync_vectors!(child.u,     usrc)
+    sync_vectors!(child.u, usrc)
     sync_vectors!(child.uprev, child.u)
     SciMLBase.u_modified!(child, true)
     return nothing
@@ -106,9 +106,9 @@ end
 # ---------------------------------------------------------------------------
 
 # NoExternalSynchronization: no-op for all parent/child combinations
-forward_sync_external!(parent::DEIntegrator, child::DEIntegrator, ::NoExternalSynchronization)  = nothing
+forward_sync_external!(parent::DEIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
 backward_sync_external!(parent::DEIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
-forward_sync_external!(parent::OperatorSplittingIntegrator, child::DEIntegrator, ::NoExternalSynchronization)  = nothing
+forward_sync_external!(parent::OperatorSplittingIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
 backward_sync_external!(parent::OperatorSplittingIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
 
 # OperatorSplittingIntegrator parent with DEIntegrator child: parameter sync
@@ -160,7 +160,7 @@ end
 validate_time_point(integrator::AnySplitIntegrator) = validate_time_point(integrator, integrator.child_subintegrators)
 function validate_time_point(parent, child::SplitSubIntegrator)
     @assert parent.t == child.t "(parent.t=$(parent.t) != child.t=$(child.t))"
-    validate_time_point(child, child.child_subintegrators)
+    return validate_time_point(child, child.child_subintegrators)
 end
 
 @unroll function validate_time_point(parent, children::Tuple)
@@ -170,7 +170,7 @@ end
 end
 
 function validate_time_point(parent, child::DEIntegrator)
-    @assert child.t == parent.t "(parent.t=$(parent.t) != child.t=$(child.t))"
+    return @assert child.t == parent.t "(parent.t=$(parent.t) != child.t=$(child.t))"
 end
 
 # ---------------------------------------------------------------------------

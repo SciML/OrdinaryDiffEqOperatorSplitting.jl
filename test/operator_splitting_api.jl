@@ -109,10 +109,10 @@ function OS.init_cache(
 end
 
 @inline DiffEqBase.get_tmp_cache(
-        integrator::OS.OperatorSplittingIntegrator,
-        alg::OS.AbstractOperatorSplittingAlgorithm,
-        cache::FakeAdaptiveAlgorithmCache
-    ) = DiffEqBase.get_tmp_cache(integrator, alg, cache.cache)
+    integrator::OS.OperatorSplittingIntegrator,
+    alg::OS.AbstractOperatorSplittingAlgorithm,
+    cache::FakeAdaptiveAlgorithmCache
+) = DiffEqBase.get_tmp_cache(integrator, alg, cache.cache)
 
 @inline function OS._perform_step!(
         outer_integrator,
@@ -130,7 +130,7 @@ FakeAdaptiveLTG(inner) = FakeAdaptiveAlgorithm(LieTrotterGodunov(inner))
 function Base.show(io::IO, alg::FakeAdaptiveAlgorithm)
     print(io, "FAKE (")
     Base.show(io, alg.alg)
-    print(io, ")")
+    return print(io, ")")
 end
 
 
@@ -150,7 +150,7 @@ end
 
     prob1a = OperatorSplittingProblem(fsplit1a, u0, tspan)
     prob1b = OperatorSplittingProblem(fsplit1b, u0, tspan)
-    
+
     # Note that we define the dof indices w.r.t the parent function.
     # Hence the indices for `fsplit2_inner` are.
     f3dofs = [1, 2]

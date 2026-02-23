@@ -75,7 +75,7 @@ mutable struct SplitSubIntegrator{
         solidxType,
         childSolidxType,
         childSyncType,
-        optionsType
+        optionsType,
     } <: SciMLBase.AbstractODEIntegrator{algType, true, uType, tType}
     alg::algType
     u::uType                        # local solution buffer
@@ -224,17 +224,17 @@ function SciMLBase.__init(
     tstops_internal = OrdinaryDiffEqCore.initialize_tstops(
         tType, tstops, d_discontinuities, prob.tspan
     )
-    saveat_internal  = OrdinaryDiffEqCore.initialize_saveat(tType, saveat, prob.tspan)
+    saveat_internal = OrdinaryDiffEqCore.initialize_saveat(tType, saveat, prob.tspan)
     d_discontinuities_internal = OrdinaryDiffEqCore.initialize_d_discontinuities(
         tType, d_discontinuities, prob.tspan
     )
 
-    u     = setup_u(prob, alg, alias_u0)
+    u = setup_u(prob, alg, alias_u0)
     uprev = setup_u(prob, alg, false)
-    tmp   = setup_u(prob, alg, false)
+    tmp = setup_u(prob, alg, false)
     uType = typeof(u)
 
-    sol      = SciMLBase.build_solution(prob, alg, tType[], uType[])
+    sol = SciMLBase.build_solution(prob, alg, tType[], uType[])
     callback = DiffEqBase.CallbackSet(callback)
 
     child_subintegrators = build_subintegrators(
@@ -252,8 +252,8 @@ function SciMLBase.__init(
         uprev = uprev, u = u,
     )
 
-    child_solution_indices  = ntuple(i -> prob.f.solution_indices[i],    length(prob.f.functions))
-    child_synchronizers     = ntuple(i -> prob.f.synchronizers[i],       length(prob.f.functions))
+    child_solution_indices = ntuple(i -> prob.f.solution_indices[i], length(prob.f.functions))
+    child_synchronizers = ntuple(i -> prob.f.synchronizers[i], length(prob.f.functions))
 
     integrator = OperatorSplittingIntegrator(
         prob.f,
@@ -264,7 +264,7 @@ function SciMLBase.__init(
         dt, dtcache,
         dtchangeable,
         tstops_internal, tstops,
-        saveat_internal,  saveat,
+        saveat_internal, saveat,
         callback,
         advance_to_tstop,
         false, false, false, false,
@@ -299,9 +299,9 @@ function DiffEqBase.reinit!(
         reinit_callbacks = true,
         reinit_retcode = true
     )
-    integrator.u    .= u0
+    integrator.u .= u0
     integrator.uprev .= u0
-    integrator.t     = t0
+    integrator.t = t0
     integrator.tprev = t0
     if dt !== nothing
         integrator.dt = dt
@@ -383,10 +383,10 @@ function _subreinit_child!(
         SciMLBase.set_proposed_dt!(sub, dt)
         set_dt!(sub, dt)
     end
-    sub.iter             = 0
-    sub.force_stepfail   = false
+    sub.iter = 0
+    sub.force_stepfail = false
     sub.last_step_failed = false
-    sub.status           = SplitSubIntegratorStatus(ReturnCode.Default)
+    sub.status = SplitSubIntegratorStatus(ReturnCode.Default)
     # Reset EEst to its appropriate default
     if isadaptive(sub)
         sub.EEst = one(sub.EEst)
@@ -406,7 +406,7 @@ end
 # ---------------------------------------------------------------------------
 function OrdinaryDiffEqCore.handle_tstop!(integrator::AnySplitIntegrator)
     if SciMLBase.has_tstop(integrator)
-        tdir_t    = tdir(integrator) * integrator.t
+        tdir_t = tdir(integrator) * integrator.t
         tdir_tstop = SciMLBase.first_tstop(integrator)
         if tdir_t == tdir_tstop
             while tdir_t == tdir_tstop
@@ -523,7 +523,7 @@ function step_header!(integrator::AnySplitIntegrator)
     return nothing
 end
 
-is_first_iteration(integrator::AnySplitIntegrator)  = integrator.iter == 0
+is_first_iteration(integrator::AnySplitIntegrator) = integrator.iter == 0
 increment_iteration(integrator::AnySplitIntegrator) = integrator.iter += 1
 
 function footer_reset_flags!(integrator)
@@ -562,16 +562,16 @@ function OrdinaryDiffEqCore.fixed_t_for_floatingpoint_error!(integrator::AnySpli
 end
 function try_snap_children_to_tstop!(integrator::SplitSubIntegrator, tstop)
     if abs(tstop - integrator.t) <
-        100eps(float(max(integrator.t, tstop) / oneunit(integrator.t))) * oneunit(integrator.t)
+            100eps(float(max(integrator.t, tstop) / oneunit(integrator.t))) * oneunit(integrator.t)
         integrator.t = tstop
     else
         @warn "Failed to snap timestep for integrator $(integrator.t) with parent integrator hitting the tstop $(tstop)."
     end
-    try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop)
+    return try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop)
 end
 function try_snap_children_to_tstop!(integrator::DEIntegrator, tstop)
-    if abs(tstop - integrator.t) <
-        100eps(float(max(integrator.t, tstop) / oneunit(integrator.t))) * oneunit(integrator.t)
+    return if abs(tstop - integrator.t) <
+            100eps(float(max(integrator.t, tstop) / oneunit(integrator.t))) * oneunit(integrator.t)
         integrator.t = tstop
     else
         @warn "Failed to snap timestep for integrator $(integrator.t) with parent integrator hitting the tstop $(tstop)."
@@ -585,7 +585,7 @@ function step_footer!(integrator::AnySplitIntegrator)
     if should_accept_step(integrator)
         integrator.last_step_failed = false
         integrator.tprev = integrator.t
-        integrator.t     = OrdinaryDiffEqCore.fixed_t_for_floatingpoint_error!(integrator, ttmp)
+        integrator.t = OrdinaryDiffEqCore.fixed_t_for_floatingpoint_error!(integrator, ttmp)
         step_accept_controller!(integrator)
     elseif integrator.force_stepfail
         if isadaptive(integrator)
@@ -730,11 +730,11 @@ end
     return current_retcode
 end
 
-_child_retcode(child::DEIntegrator)       = SciMLBase.check_error(child)
+_child_retcode(child::DEIntegrator) = SciMLBase.check_error(child)
 _child_retcode(child::SplitSubIntegrator) = child.status.retcode
 
 function setup_u(prob::OperatorSplittingProblem, solver, alias_u0)
-    alias_u0 ? prob.u0 : RecursiveArrayTools.recursivecopy(prob.u0)
+    return alias_u0 ? prob.u0 : RecursiveArrayTools.recursivecopy(prob.u0)
 end
 
 @inline function DiffEqBase.get_tmp_cache(integrator::OperatorSplittingIntegrator)
@@ -863,11 +863,11 @@ function advance_solution_by!(
 end
 
 function advance_solution_by!(
-    outer::SplitSubIntegrator,
-    children::Tuple,
-    cache::AbstractOperatorSplittingCache,
-    dt
-)
+        outer::SplitSubIntegrator,
+        children::Tuple,
+        cache::AbstractOperatorSplittingCache,
+        dt
+    )
     _perform_step!(outer, children, cache, dt)
 
     if outer.force_stepfail
@@ -984,10 +984,10 @@ function _build_child(
         length(f.functions)
     )
 
-    child_solution_indices  = ntuple(i -> f.solution_indices[i],    length(f.functions))
-    child_synchronizers     = ntuple(i -> f.synchronizers[i],       length(f.functions))
+    child_solution_indices = ntuple(i -> f.solution_indices[i], length(f.functions))
+    child_synchronizers = ntuple(i -> f.synchronizers[i], length(f.functions))
 
-    u_sub     = RecursiveArrayTools.recursivecopy(uouter[solution_indices])
+    u_sub = RecursiveArrayTools.recursivecopy(uouter[solution_indices])
     uprev_sub = RecursiveArrayTools.recursivecopy(uprevouter[solution_indices])
 
     tstops_internal = OrdinaryDiffEqCore.initialize_tstops(
@@ -1067,9 +1067,9 @@ end
 # ---------------------------------------------------------------------------
 SciMLBase.has_stats(::AnySplitIntegrator) = true
 
-SciMLBase.has_tstop(i::AnySplitIntegrator)    = !isempty(i.tstops)
-SciMLBase.first_tstop(i::AnySplitIntegrator)  = first(i.tstops)
-SciMLBase.pop_tstop!(i::AnySplitIntegrator)   = pop!(i.tstops)
+SciMLBase.has_tstop(i::AnySplitIntegrator) = !isempty(i.tstops)
+SciMLBase.first_tstop(i::AnySplitIntegrator) = first(i.tstops)
+SciMLBase.pop_tstop!(i::AnySplitIntegrator) = pop!(i.tstops)
 
 DiffEqBase.get_dt(i::AnySplitIntegrator) = i.dt
 function set_dt!(i::DiffEqBase.DEIntegrator, dt)

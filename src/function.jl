@@ -20,11 +20,11 @@ struct GenericSplitFunction{fSetType <: Tuple, idxSetType <: Tuple, sSetType <: 
 end
 
 function gsf_recursive_function_type_safety_check(f::GenericSplitFunction)
-    gsf_recursive_function_type_safety_check.(f.functions)
+    return gsf_recursive_function_type_safety_check.(f.functions)
 end
 
 function gsf_recursive_function_type_safety_check(dunno)
-    @warn "One of the inner functions in GenericSplitFunction is of type $(typeof(dunno)) which is not a subtype of SciMLBase.AbstractDiffEqFunction."
+    return @warn "One of the inner functions in GenericSplitFunction is of type $(typeof(dunno)) which is not a subtype of SciMLBase.AbstractDiffEqFunction."
 end
 
 function gsf_recursive_function_type_safety_check(::SciMLBase.AbstractDiffEqFunction)
