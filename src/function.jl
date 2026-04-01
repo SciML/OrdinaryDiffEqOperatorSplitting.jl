@@ -13,9 +13,22 @@ struct GenericSplitFunction{fSetType <: Tuple, idxSetType <: Tuple, sSetType <: 
     # Operators to update the ode function parameters.
     synchronizers::sSetType
     function GenericSplitFunction(fs::Tuple, drs::Tuple, syncers::Tuple)
-        @assert length(fs) == length(drs) == length(syncers)
+        @assert length(fs) == length(drs) == length(syncers) "Number of input tuples does not match."
+        gsf_recursive_function_type_safety_check.(fs)
         return new{typeof(fs), typeof(drs), typeof(syncers)}(fs, drs, syncers)
     end
+end
+
+function gsf_recursive_function_type_safety_check(f::GenericSplitFunction)
+    return gsf_recursive_function_type_safety_check.(f.functions)
+end
+
+function gsf_recursive_function_type_safety_check(dunno)
+    return @warn "One of the inner functions in GenericSplitFunction is of type $(typeof(dunno)) which is not a subtype of SciMLBase.AbstractDiffEqFunction."
+end
+
+function gsf_recursive_function_type_safety_check(::SciMLBase.AbstractDiffEqFunction)
+    # OK
 end
 
 num_operators(f::GenericSplitFunction) = length(f.functions)

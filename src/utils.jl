@@ -26,8 +26,9 @@ end
 """
     need_sync(a, b)
 
-This function determines whether it is necessary to synchronize two objects with any solution information.
-A possible reason when no synchronization is necessary might be that the vectors alias each other in memory.
+Determines whether it is necessary to synchronize two objects with any
+solution information. A possible reason when no synchronization is necessary
+might be that the vectors alias each other in memory.
 """
 need_sync
 
@@ -39,156 +40,144 @@ need_sync(a::SubArray, b::SubArray) = a.parent !== b.parent
 """
     sync_vectors!(a, b)
 
-Copies the information in object b into object a, if synchronization is necessary.
+Copies the information in `b` into `a` if synchronization is necessary.
 """
 function sync_vectors!(a, b)
-    return if need_sync(a, b) && a !== b
+    if need_sync(a, b) && a !== b
         a .= b
     end
+    return nothing
 end
 
 """
-     forward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+    forward_sync_subintegrator!(parent_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
 
-This function is responsible of copying the solution and parameters of the outer integrator and the synchronized subintegrators with the information given into the inner integrator.
+This function is responsible of copying the solution and parameters of the parent integrator and the synchronized subintegrators with the information given into the inner integrator.
 If the inner integrator is synchronized with other inner integrators using `sync`, the function `forward_sync_external!` shall be dispatched for `sync`.
 The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
-The `solution_indices` are global indices in the outer integrators solution vectors.
+The `solution_indices` are indices into the parent integrators solution vectors.
 """
+
 function forward_sync_subintegrator!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, solution_indices, sync
+        parent::AnySplitIntegrator,
+        child::DEIntegrator,
+        solution_indices,
+        sync
     )
-    forward_sync_internal!(outer_integrator, inner_integrator, solution_indices)
-    return forward_sync_external!(outer_integrator, inner_integrator, sync)
+    forward_sync_internal!(parent.u, child, solution_indices)
+    forward_sync_external!(parent, child, sync)
+    return nothing
 end
 
-"""
-    backward_sync_subintegrator!(outer_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+# Shared internal helper: copy master u slice → leaf DEIntegrator u/uprev
+function forward_sync_internal!(u_source, child::DEIntegrator, solution_indices)
+    @views usrc = u_source[solution_indices]
+    sync_vectors!(child.u, usrc)
+    sync_vectors!(child.uprev, child.u)
+    SciMLBase.u_modified!(child, true)
+    return nothing
+end
 
-This function is responsible of copying the solution of the inner integrator back into outer integrator and the synchronized subintegrators.
+
+"""
+    backward_sync_subintegrator!(parent_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+
+This function is responsible of copying the solution of the inner integrator back into parent integrator and the synchronized subintegrators.
 If the inner integrator is synchronized with other inner integrators using `sync`, the function `backward_sync_external!` shall be dispatched for `sync`.
 The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
-The `solution_indices` are global indices in the outer integrators solution vectors.
+The `solution_indices` are indices in the parent integrators solution vectors.
 """
+
 function backward_sync_subintegrator!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, solution_indices, sync
+        parent::AnySplitIntegrator,
+        child::DEIntegrator,
+        solution_indices,
+        sync
     )
-    backward_sync_internal!(outer_integrator, inner_integrator, solution_indices)
-    return backward_sync_external!(outer_integrator, inner_integrator, sync)
-end
-
-# This is a bit tricky, because per default the operator splitting integrators share their solution vector. However, there is also the case
-# when part of the problem is on a different device (thing e.g. about operator A being on CPU and B being on GPU).
-# This case should be handled with special synchronizers.
-function forward_sync_internal!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::OperatorSplittingIntegrator, solution_indices
-    )
-    return nothing
-end
-function backward_sync_internal!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::OperatorSplittingIntegrator, solution_indices
-    )
+    @views udst = parent.u[solution_indices]
+    sync_vectors!(udst, child.u)
+    backward_sync_external!(parent, child, sync)
     return nothing
 end
 
-function forward_sync_internal!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, solution_indices
-    )
-    @views uouter = outer_integrator.u[solution_indices]
-    sync_vectors!(inner_integrator.uprev, uouter)
-    sync_vectors!(inner_integrator.u, uouter)
-    return SciMLBase.u_modified!(inner_integrator, true)
-end
-function backward_sync_internal!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, solution_indices
-    )
-    @views uouter = outer_integrator.u[solution_indices]
-    return sync_vectors!(uouter, inner_integrator.u)
-end
+# ---------------------------------------------------------------------------
+# forward_sync_external! / backward_sync_external!
+# These handle parameter synchronisation via the `sync` object.
+# ---------------------------------------------------------------------------
 
-# This is a noop, because operator splitting integrators do not have parameters for now
+# NoExternalSynchronization: no-op for all parent/child combinations
+forward_sync_external!(parent::DEIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
+backward_sync_external!(parent::DEIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
+forward_sync_external!(parent::OperatorSplittingIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
+backward_sync_external!(parent::OperatorSplittingIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
+
+# OperatorSplittingIntegrator parent with DEIntegrator child: parameter sync
 function forward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::OperatorSplittingIntegrator, sync::NoExternalSynchronization
+        parent::OperatorSplittingIntegrator,
+        child::DEIntegrator,
+        sync
     )
-    return nothing
-end
-function forward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, sync::NoExternalSynchronization
-    )
-    return nothing
-end
-function forward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, sync
-    )
-    return synchronize_solution_with_parameters!(outer_integrator, inner_integrator.p, sync)
-end
-
-function backward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::OperatorSplittingIntegrator, sync::NoExternalSynchronization
-    )
-    return nothing
+    return synchronize_solution_with_parameters!(parent, child.p, sync)
 end
 function backward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, sync::NoExternalSynchronization
+        parent::OperatorSplittingIntegrator,
+        child::DEIntegrator,
+        sync
     )
-    return nothing
-end
-function backward_sync_external!(
-        outer_integrator::OperatorSplittingIntegrator,
-        inner_integrator::DEIntegrator, sync
-    )
-    return synchronize_solution_with_parameters!(outer_integrator, inner_integrator.p, sync)
+    return synchronize_solution_with_parameters!(parent, child.p, sync)
 end
 
-function synchronize_solution_with_parameters!(outer_integrator::OperatorSplittingIntegrator, p, sync)
+
+function synchronize_solution_with_parameters!(
+        parent::OperatorSplittingIntegrator, p, sync
+    )
     @warn "Outer synchronizer not dispatched for parameter type $(typeof(p)) with synchronizer type $(typeof(sync))." maxlog = 1
     return nothing
 end
-# If we encounter NullParameters, then we have the convention for the standard sync map that no external solution is necessary.
 function synchronize_solution_with_parameters!(
-        outer_integrator::OperatorSplittingIntegrator, p::NullParameters, sync
+        parent::OperatorSplittingIntegrator, ::NullParameters, sync
     )
     return nothing
 end
 
-# TODO this should go into a custom tree data structure instead of into a tuple-tree
-function build_solution_index_tree(f::GenericSplitFunction)
-    return ntuple(
-        i -> build_solution_index_tree_recursion(f.functions[i], f.solution_indices[i]),
-        length(f.functions)
-    )
+# Time stuff
+function OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator::AnySplitIntegrator)
+    if tdir(integrator) > 0
+        integrator.dt = min(integrator.opts.dtmax, integrator.dt)
+    else
+        integrator.dt = max(integrator.opts.dtmax, integrator.dt)
+    end
+    dtmin = OrdinaryDiffEqCore.timedepentdtmin(integrator)
+    if tdir(integrator) > 0
+        integrator.dt = max(integrator.dt, dtmin)
+    else
+        integrator.dt = min(integrator.dt, dtmin)
+    end
+    return nothing
 end
 
-function build_solution_index_tree_recursion(f::GenericSplitFunction, solution_indices)
-    return ntuple(
-        i -> build_solution_index_tree_recursion(f.functions[i], f.solution_indices[i]),
-        length(f.functions)
-    )
+# Check time-step information consistency
+validate_time_point(integrator::AnySplitIntegrator) = validate_time_point(integrator, integrator.child_subintegrators)
+function validate_time_point(parent, child::SplitSubIntegrator)
+    @assert parent.t == child.t "(parent.t=$(parent.t) != child.t=$(child.t))"
+    return validate_time_point(child, child.child_subintegrators)
 end
 
-function build_solution_index_tree_recursion(f, solution_indices)
-    return solution_indices
+@unroll function validate_time_point(parent, children::Tuple)
+    @unroll for child in children
+        validate_time_point(parent, child)
+    end
 end
 
-function build_synchronizer_tree(f::GenericSplitFunction)
-    return ntuple(i -> build_synchronizer_tree_recursion(f.functions[i], f.synchronizers[i]), length(f.functions))
+function validate_time_point(parent, child::DEIntegrator)
+    return @assert child.t == parent.t "(parent.t=$(parent.t) != child.t=$(child.t))"
 end
 
-function build_synchronizer_tree_recursion(f::GenericSplitFunction, synchronizers)
-    return ntuple(i -> build_synchronizer_tree_recursion(f.functions[i], f.synchronizers[i]), length(f.functions))
-end
+# ---------------------------------------------------------------------------
+# _child_failed: check whether a child reported a failure
+# ---------------------------------------------------------------------------
+_child_failed(child::DEIntegrator) =
+    child.sol.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
 
-function build_synchronizer_tree_recursion(f, synchronizer)
-    return synchronizer
-end
+_child_failed(child::SplitSubIntegrator) =
+    child.status.retcode ∉ (ReturnCode.Default, ReturnCode.Success)

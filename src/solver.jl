@@ -1,56 +1,58 @@
-# Lie-Trotter-Godunov Splitting Implementation
+# ---------------------------------------------------------------------------
+# Lie-Trotter-Godunov operator splitting
+# ---------------------------------------------------------------------------
 """
     LieTrotterGodunov <: AbstractOperatorSplittingAlgorithm
 
-A first order sequential operator splitting algorithm attributed to [Lie:1880:tti,Tro:1959:psg,God:1959:dmn](@cite).
+First-order sequential operator splitting algorithm attributed to
+[Lie:1880:tti,Tro:1959:psg,God:1959:dmn](@cite).
 """
 struct LieTrotterGodunov{AlgTupleType} <: AbstractOperatorSplittingAlgorithm
     inner_algs::AlgTupleType # Tuple of timesteppers for inner problems
-    # transfer_algs::TransferTupleType # Tuple of transfer algorithms from the master solution into the individual ones
 end
 
-struct LieTrotterGodunovCache{uType, uprevType, iiType} <: AbstractOperatorSplittingCache
+function Base.show(io::IO, alg::LieTrotterGodunov)
+    print(io, "LTG (")
+    for inner_alg in alg.inner_algs[1:(end - 1)]
+        Base.show(io, inner_alg)
+        print(io, " -> ")
+    end
+    length(alg.inner_algs) > 0 && Base.show(io, alg.inner_algs[end])
+    return print(io, ")")
+end
+
+struct LieTrotterGodunovCache{uType, uprevType} <: AbstractOperatorSplittingCache
     u::uType
     uprev::uprevType
-    inner_caches::iiType
 end
 
 function init_cache(
         f::GenericSplitFunction, alg::LieTrotterGodunov;
         uprev::AbstractArray, u::AbstractVector,
-        inner_caches,
-        alias_uprev = true,
-        alias_u = false
     )
-    _uprev = alias_uprev ? uprev : RecursiveArrayTools.recursivecopy(uprev)
-    _u = alias_u ? u : RecursiveArrayTools.recursivecopy(u)
-    return LieTrotterGodunovCache(_u, _uprev, inner_caches)
+    return LieTrotterGodunovCache(u, uprev)
 end
 
-@inline @unroll function advance_solution_to!(
-        outer_integrator::OperatorSplittingIntegrator,
-        subintegrators::Tuple, solution_indices::Tuple,
-        synchronizers::Tuple, cache::LieTrotterGodunovCache, tnext
+@unroll function _perform_step!(
+        parent,
+        children::Tuple,
+        cache::LieTrotterGodunovCache,
+        dt
     )
-    # We assume that the integrators are already synced
-    (; inner_caches) = cache
-    # For each inner operator
     i = 0
-    @unroll for subinteg in subintegrators
+    @unroll for child in children
         i += 1
-        synchronizer = synchronizers[i]
-        idxs = solution_indices[i]
-        cache = inner_caches[i]
 
-        @timeit_debug "sync ->" forward_sync_subintegrator!(outer_integrator, subinteg, idxs, synchronizer)
-        @timeit_debug "time solve" advance_solution_to!(
-            outer_integrator, subinteg, idxs, synchronizer, cache, tnext
-        )
-        if !(subinteg isa Tuple) &&
-                subinteg.sol.retcode ∉
-                (ReturnCode.Default, ReturnCode.Success)
+        idxs = parent.child_solution_indices[i]
+        sync = parent.child_synchronizers[i]
+
+        @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
+        @timeit_debug "time solve" advance_solution_by!(parent, child, dt)
+        if _child_failed(child)
+            parent.force_stepfail = true
             return
         end
-        backward_sync_subintegrator!(outer_integrator, subinteg, idxs, synchronizer)
+
+        backward_sync_subintegrator!(parent, child, idxs, sync)
     end
 end
