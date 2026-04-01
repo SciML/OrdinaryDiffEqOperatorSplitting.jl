@@ -518,9 +518,28 @@ function step_header!(integrator::AnySplitIntegrator)
     end
     increment_iteration(integrator)
     OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator)
-    OrdinaryDiffEqCore.modify_dt_for_tstops!(integrator)
+    modify_dt_for_tstops!(integrator)
     integrator.force_stepfail = false
     return nothing
+end
+
+function modify_dt_for_tstops!(integrator)
+    if SciMLBase.has_tstop(integrator)
+        tdir_t = integrator.tdir * integrator.t
+        tdir_tstop = SciMLBase.first_tstop(integrator)
+        if integrator.opts.adaptive
+            integrator.dt = integrator.tdir *
+                min(abs(integrator.dt), abs(tdir_tstop - tdir_t)) # step! to the end
+        elseif iszero(integrator.dtcache) && integrator.dtchangeable
+            integrator.dt = integrator.tdir * abs(tdir_tstop - tdir_t)
+        elseif integrator.dtchangeable && !integrator.force_stepfail
+            # always try to step! with dtcache, but lower if a tstop
+            # however, if force_stepfail then don't set to dtcache, and no tstop worry
+            integrator.dt = integrator.tdir *
+                min(abs(integrator.dtcache), abs(tdir_tstop - tdir_t)) # step! to the end
+        end
+    end
+    return
 end
 
 is_first_iteration(integrator::AnySplitIntegrator) = integrator.iter == 0
@@ -542,10 +561,10 @@ function fix_solution_buffer_sizes!(integrator, sol)
     if !(integrator.sol isa SciMLBase.DAESolution)
         resize!(integrator.sol.k, integrator.saveiter_dense)
     end
-    return nothing
+    return
 end
 
-function OrdinaryDiffEqCore.fixed_t_for_floatingpoint_error!(integrator::AnySplitIntegrator, ttmp)
+function fixed_t_for_floatingpoint_error!(integrator::AnySplitIntegrator, ttmp)
     return if DiffEqBase.has_tstop(integrator)
         tstop = integrator.tdir * DiffEqBase.first_tstop(integrator)
         if abs(ttmp - tstop) <
@@ -585,7 +604,7 @@ function step_footer!(integrator::AnySplitIntegrator)
     if should_accept_step(integrator)
         integrator.last_step_failed = false
         integrator.tprev = integrator.t
-        integrator.t = OrdinaryDiffEqCore.fixed_t_for_floatingpoint_error!(integrator, ttmp)
+        integrator.t = fixed_t_for_floatingpoint_error!(integrator, ttmp)
         step_accept_controller!(integrator)
     elseif integrator.force_stepfail
         if isadaptive(integrator)
