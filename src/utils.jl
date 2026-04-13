@@ -74,7 +74,13 @@ function forward_sync_internal!(u_source, child::DEIntegrator, solution_indices)
     @views usrc = u_source[solution_indices]
     sync_vectors!(child.u, usrc)
     sync_vectors!(child.uprev, child.u)
-    SciMLBase.u_modified!(child, true)
+    # SciMLBase v3 renamed this to `derivative_discontinuity!`; call the
+    # appropriate name based on which SciMLBase is loaded.
+    @static if isdefined(SciMLBase, :derivative_discontinuity!)
+        SciMLBase.derivative_discontinuity!(child, true)
+    else
+        SciMLBase.u_modified!(child, true)
+    end
     return nothing
 end
 
