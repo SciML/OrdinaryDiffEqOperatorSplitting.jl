@@ -1115,3 +1115,11 @@ end
 
 DiffEqBase.u_modified!(i::OperatorSplittingIntegrator, bool) = i.u_modified = bool
 DiffEqBase.u_modified!(i::SplitSubIntegrator, bool) = i.u_modified = bool
+
+# SciMLBase v3 renamed `u_modified!` → `derivative_discontinuity!`. On v3+,
+# also provide the overloads under the new name so callers using the new
+# API dispatch correctly instead of hitting the generic `error(...)` fallback.
+@static if isdefined(SciMLBase, :derivative_discontinuity!)
+    SciMLBase.derivative_discontinuity!(i::OperatorSplittingIntegrator, bool) = i.u_modified = bool
+    SciMLBase.derivative_discontinuity!(i::SplitSubIntegrator, bool) = i.u_modified = bool
+end
