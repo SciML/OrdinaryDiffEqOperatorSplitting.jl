@@ -1076,7 +1076,8 @@ function _build_child(
         d_discontinuities,
         save_everystep = false,
         advance_to_tstop = false,
-        adaptive, controller, verbose
+        adaptive, controller,
+        verbose = _inner_verbose(verbose)
     )
     return integrator
 end
