@@ -72,6 +72,12 @@ achieving second-order accuracy through symmetry.
 """
 struct StrangMarchuk{AlgTupleType} <: AbstractOperatorSplittingAlgorithm
     inner_algs::AlgTupleType
+    function StrangMarchuk(inner_algs::T) where {T <: Tuple}
+        length(inner_algs) == 2 || throw(
+            ArgumentError("StrangMarchuk requires exactly 2 inner algorithms, got $(length(inner_algs))")
+        )
+        return new{T}(inner_algs)
+    end
 end
 
 function Base.show(io::IO, alg::StrangMarchuk)

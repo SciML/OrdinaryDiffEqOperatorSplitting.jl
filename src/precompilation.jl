@@ -34,10 +34,18 @@ end
     fsplit = GenericSplitFunction((f1, fsplitinner), (f1dofs, [1, 2, 3]))
 
     prob = OperatorSplittingProblem(fsplit, u0, tspan)
-    tstepper = LieTrotterGodunov((Euler(), LieTrotterGodunov((Euler(), Euler()))))
 
-    # Precompile init and a few steps
-    integrator = DiffEqBase.init(prob, tstepper, dt = 0.01, verbose = false)
+    # Precompile LieTrotterGodunov
+    tstepper_ltg = LieTrotterGodunov((Euler(), LieTrotterGodunov((Euler(), Euler()))))
+    integrator = DiffEqBase.init(prob, tstepper_ltg, dt = 0.01, verbose = false)
     step!(integrator)
     solve!(integrator)
+
+    # Precompile StrangMarchuk
+    fsplit_sm = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
+    prob_sm = OperatorSplittingProblem(fsplit_sm, u0, tspan)
+    tstepper_sm = StrangMarchuk((Euler(), Euler()))
+    integrator_sm = DiffEqBase.init(prob_sm, tstepper_sm, dt = 0.01, verbose = false)
+    step!(integrator_sm)
+    solve!(integrator_sm)
 end

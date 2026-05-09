@@ -288,6 +288,51 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
         end
     end
 
+    @testset "Convergence order" begin
+        # Use non-commuting operators so splitting error is non-zero.
+        # A = diag(-1,-2), B = [0 0.5; 0.5 0] have [A,B] ≠ 0.
+        function ode_conv_A(du, u, p, t)
+            du[1] = -u[1]
+            return du[2] = -2 * u[2]
+        end
+        function ode_conv_B(du, u, p, t)
+            du[1] = 0.5 * u[2]
+            return du[2] = 0.5 * u[1]
+        end
+        fA = ODEFunction(ode_conv_A)
+        fB = ODEFunction(ode_conv_B)
+
+        conv_tspan = (0.0, 1.0)
+        conv_u0 = [1.0, 1.0]
+        conv_trueu = exp(conv_tspan[2] * [-1.0 0.5; 0.5 -2.0]) * conv_u0
+
+        conv_dofs = [1, 2]
+        fsplit_conv = GenericSplitFunction((fA, fB), (conv_dofs, conv_dofs))
+        prob_conv = OperatorSplittingProblem(fsplit_conv, conv_u0, conv_tspan)
+
+        dts = [0.1, 0.05, 0.025]
+        for (TimeStepperType, expected_order) in (
+                (LieTrotterGodunov, 1),
+                (StrangMarchuk, 2),
+            )
+            @testset "$TimeStepperType (order $expected_order)" begin
+                errors = map(dts) do dt_i
+                    tstepper = TimeStepperType((Tsit5(), Tsit5()))
+                    integrator = DiffEqBase.init(
+                        prob_conv, tstepper, dt = dt_i, verbose = false,
+                        alias_u0 = false, adaptive = false
+                    )
+                    DiffEqBase.solve!(integrator)
+                    maximum(abs, integrator.u .- conv_trueu)
+                end
+                for i in 1:(length(errors) - 1)
+                    rate = log2(errors[i] / errors[i + 1])
+                    @test rate ≈ expected_order atol = 0.3
+                end
+            end
+        end
+    end
+
     @testset "Instability detection" begin
         dt = 0.01π
 
