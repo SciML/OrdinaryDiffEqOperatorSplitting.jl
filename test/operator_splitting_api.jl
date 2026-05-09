@@ -281,6 +281,75 @@ end
         end
     end
 
+    @testset "StrangMarchuk reinit and convergence" begin
+        @testset "$tstepper" for (prob, tstepper) in (
+                (prob1a, StrangMarchuk((Euler(), Euler()))),
+                (prob1a, StrangMarchuk((Tsit5(), Euler()))),
+                (prob1a, StrangMarchuk((Euler(), Tsit5()))),
+                (prob1a, StrangMarchuk((Tsit5(), Tsit5()))),
+                (prob1b, StrangMarchuk((Euler(), Euler()))),
+                (prob1b, StrangMarchuk((Tsit5(), Euler()))),
+                (prob1b, StrangMarchuk((Euler(), Tsit5()))),
+                (prob1b, StrangMarchuk((Tsit5(), Tsit5()))),
+                (prob2, StrangMarchuk((Euler(), StrangMarchuk((Euler(), Euler()))))),
+                (prob2, StrangMarchuk((Tsit5(), StrangMarchuk((Tsit5(), Tsit5()))))),
+            )
+            integrator = DiffEqBase.init(
+                prob, tstepper, dt = dt, verbose = true, alias_u0 = false, adaptive = false
+            )
+            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
+
+            sub1 = integrator.child_subintegrators[1]
+            sub2 = integrator.child_subintegrators[2]
+
+            DiffEqBase.solve!(integrator)
+            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
+            ufinal = copy(integrator.u)
+            @test isapprox(ufinal, trueu, atol = 1.0e-6)
+            @test integrator.t ≈ tspan[2]
+            @test integrator.dtcache ≈ dt
+            @test integrator.iter == nsteps
+
+            @test sub1.t ≈ tspan[2]
+            @test sub1.iter == 2 * nsteps
+
+            @test sub2.t ≈ tspan[2]
+            @test sub2.iter == nsteps
+
+            DiffEqBase.reinit!(integrator; dt = dt)
+            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
+            for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
+            end
+            @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
+            @test integrator.t ≈ tspan[2]
+            @test integrator.dtcache ≈ dt
+            @test integrator.iter == nsteps
+
+            DiffEqBase.reinit!(integrator; dt = dt)
+            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
+            for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
+            end
+            @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
+            @test integrator.t ≈ tspan[2]
+            @test integrator.dtcache ≈ dt
+            @test integrator.iter == nsteps
+
+            DiffEqBase.reinit!(integrator; dt = dt)
+            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
+            DiffEqBase.solve!(integrator)
+            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
+            @test integrator.t ≈ tspan[2]
+            @test integrator.dtcache ≈ dt
+            @test integrator.iter == nsteps
+
+            @test sub1.t ≈ tspan[2]
+            @test sub1.iter == 2 * nsteps
+
+            @test sub2.t ≈ tspan[2]
+            @test sub2.iter == nsteps
+        end
+    end
+
     @testset "Instability detection" begin
         dt = 0.01π
 
@@ -296,7 +365,7 @@ end
         fsplit_NaN = GenericSplitFunction((f1, f_NaN), (f1dofs, f3dofs))
         prob_NaN = OperatorSplittingProblem(fsplit_NaN, u0, tspan)
 
-        for TimeStepperType in (LieTrotterGodunov,)
+        for TimeStepperType in (LieTrotterGodunov, StrangMarchuk)
             @testset "Solver type $TimeStepperType | $tstepper" for tstepper in (
                     TimeStepperType((Euler(), Euler())),
                     TimeStepperType((Tsit5(), Euler())),

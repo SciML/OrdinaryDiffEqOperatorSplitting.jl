@@ -162,6 +162,14 @@ function OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator::AnySplitIntegrator)
     return nothing
 end
 
+_force_set_time!(child::DEIntegrator, t) = (child.t = t)
+function _force_set_time!(child::SplitSubIntegrator, t)
+    child.t = t
+    for sub in child.child_subintegrators
+        _force_set_time!(sub, t)
+    end
+end
+
 # Check time-step information consistency
 validate_time_point(integrator::AnySplitIntegrator) = validate_time_point(integrator, integrator.child_subintegrators)
 function validate_time_point(parent, child::SplitSubIntegrator)

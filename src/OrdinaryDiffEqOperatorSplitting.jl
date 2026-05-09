@@ -35,7 +35,7 @@ include("integrator.jl")
 include("solver.jl")
 include("utils.jl")
 
-export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov
+export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov, StrangMarchuk
 
 include("precompilation.jl")
 
