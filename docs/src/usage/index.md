@@ -49,3 +49,18 @@ for (u, t) in TimeChoiceIterator(integrator, 0.0:0.5:1.0)
     @show t, u
 end
 ```
+
+For second-order accuracy, use the `StrangMarchuk` algorithm instead.
+It requires exactly two subproblems and performs the symmetric
+A(Δt/2) → B(Δt) → A(Δt/2) splitting:
+
+```julia
+alg = StrangMarchuk(
+    (Euler(), Euler())
+)
+
+integrator = init(prob, alg, dt = 0.1)
+for (u, t) in TimeChoiceIterator(integrator, 0.0:0.5:1.0)
+    @show t, u
+end
+```

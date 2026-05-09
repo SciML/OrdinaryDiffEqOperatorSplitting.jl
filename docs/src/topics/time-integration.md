@@ -116,6 +116,48 @@ $n \in \mathbb{N}$ the following bound
 
 which implies stability of the scheme.
 
+### Strang-Marchuk Splitting
+
+A natural way to improve the accuracy of operator splitting is to symmetrize the
+scheme. The Strang-Marchuk splitting [Str:1968:ccd,Mar:1971:tsm](@cite) achieves
+second-order accuracy for two operators $F_1$ and $F_2$ by performing
+
+```math
+\begin{aligned}
+    \text{Solve} \quad d_t u^1(t) &= F_1(u^1(t), p, t) & & \quad \text{on} \; [t_0, t_0 + \Delta t/2] \; \text{with} \; u^1(t_0) = u_0 \\
+    \text{Solve} \quad d_t u^2(t) &= F_2(u^2(t), p, t) & & \quad \text{on} \; [t_0, t_0 + \Delta t] \; \text{with} \; u^2(t_0) = u^1(t_0 + \Delta t/2) \\
+    \text{Solve} \quad d_t u^3(t) &= F_1(u^3(t), p, t) & & \quad \text{on} \; [t_0 + \Delta t/2, t_0 + \Delta t] \; \text{with} \; u^3(t_0 + \Delta t/2) = u^2(t_0 + \Delta t)
+\end{aligned}
+```
+
+yielding $u(t_0 + \Delta t) \approx u^3(t_0 + \Delta t)$.
+
+### Analysis of Strang-Marchuk
+
+For two bounded linear operators $L_1$ and $L_2$ the Strang-Marchuk approximation
+reads
+
+```math
+\tilde{u}(t) = e^{L_1 t/2} \, e^{L_2 t} \, e^{L_1 t/2} \, u_0 \, .
+```
+
+Expanding the exponentials:
+
+```math
+\begin{aligned}
+e^{L_1 t/2} \, e^{L_2 t} \, e^{L_1 t/2}
+&= \bigl(I + \tfrac{t}{2}L_1 + \tfrac{t^2}{8}L_1^2 + \cdots\bigr)
+   \bigl(I + t L_2 + \tfrac{t^2}{2}L_2^2 + \cdots\bigr)
+   \bigl(I + \tfrac{t}{2}L_1 + \tfrac{t^2}{8}L_1^2 + \cdots\bigr) \\
+&= I + t(L_1 + L_2) + \tfrac{t^2}{2}(L_1 + L_2)^2 + O(t^3)
+\end{aligned}
+```
+
+which matches the Taylor expansion of $e^{(L_1+L_2)t}$ through the $t^2$ term.
+The symmetry of the scheme causes the first-order commutator term
+$[L_1, L_2] = L_1 L_2 - L_2 L_1$ to cancel, leaving a local truncation error
+of $O(t^3)$ and hence second-order global accuracy.
+
 ## References
 
 ```@bibliography
