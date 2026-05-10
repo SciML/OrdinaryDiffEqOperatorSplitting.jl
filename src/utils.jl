@@ -168,6 +168,7 @@ function _force_set_time!(child::SplitSubIntegrator, t)
     for sub in child.child_subintegrators
         _force_set_time!(sub, t)
     end
+    return
 end
 
 # Check time-step information consistency

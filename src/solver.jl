@@ -166,4 +166,5 @@ function _perform_step!(
     for i in 1:(N - 1)
         try_snap_children_to_tstop!(children[i], children[N].t)
     end
+    return
 end
