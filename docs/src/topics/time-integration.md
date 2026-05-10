@@ -120,7 +120,13 @@ which implies stability of the scheme.
 
 A natural way to improve the accuracy of operator splitting is to symmetrize the
 scheme. The Strang-Marchuk splitting [Str:1968:ccd,Mar:1971:tsm](@cite) achieves
-second-order accuracy for two operators $F_1$ and $F_2$ by performing
+second-order accuracy for $N$ operators by performing a palindromic sweep
+
+```math
+F_1(\Delta t/2) \to \cdots \to F_{N-1}(\Delta t/2) \to F_N(\Delta t) \to F_{N-1}(\Delta t/2) \to \cdots \to F_1(\Delta t/2)
+```
+
+More formally, for the simplest case of two operators $F_1$ and $F_2$
 
 ```math
 \begin{aligned}
@@ -134,8 +140,8 @@ yielding $u(t_0 + \Delta t) \approx u^3(t_0 + \Delta t)$.
 
 ### Analysis of Strang-Marchuk
 
-For two bounded linear operators $L_1$ and $L_2$ the Strang-Marchuk approximation
-reads
+We show the second-order accuracy for two bounded linear operators $L_1$ and
+$L_2$. The Strang-Marchuk approximation reads
 
 ```math
 \tilde{u}(t) = e^{L_1 t/2} \, e^{L_2 t} \, e^{L_1 t/2} \, u_0 \, .
@@ -156,7 +162,8 @@ e^{L_1 t/2} \, e^{L_2 t} \, e^{L_1 t/2}
 which matches the Taylor expansion of $e^{(L_1+L_2)t}$ through the $t^2$ term.
 The symmetry of the scheme causes the first-order commutator term
 $[L_1, L_2] = L_1 L_2 - L_2 L_1$ to cancel, leaving a local truncation error
-of $O(t^3)$ and hence second-order global accuracy.
+of $O(t^3)$ and hence second-order global accuracy. The same argument extends to
+the general $N$-operator palindromic scheme.
 
 ## References
 

@@ -51,8 +51,8 @@ end
 ```
 
 For second-order accuracy, use the `StrangMarchuk` algorithm instead.
-It requires exactly two subproblems and performs the symmetric
-A(Δt/2) → B(Δt) → A(Δt/2) splitting:
+It performs the symmetric palindromic splitting
+A₁(Δt/2) → … → Aₙ(Δt) → … → A₁(Δt/2):
 
 ```julia
 alg = StrangMarchuk(

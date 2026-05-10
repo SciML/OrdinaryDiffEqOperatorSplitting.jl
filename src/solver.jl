@@ -63,21 +63,17 @@ end
 """
     StrangMarchuk <: AbstractOperatorSplittingAlgorithm
 
-Second-order symmetric operator splitting algorithm attributed to
+Second-order symmetric (palindromic) operator splitting algorithm attributed to
 [Str:1968:ccd,Mar:1971:tsm](@cite).
 
-For two operators ``A`` and ``B`` the scheme performs
-``A(\\Delta t/2) \\to B(\\Delta t) \\to A(\\Delta t/2)``,
+For ``N`` operators the scheme performs
+
+``A_1(\\Delta t/2) \\to \\cdots \\to A_{N-1}(\\Delta t/2) \\to A_N(\\Delta t) \\to A_{N-1}(\\Delta t/2) \\to \\cdots \\to A_1(\\Delta t/2)``
+
 achieving second-order accuracy through symmetry.
 """
 struct StrangMarchuk{AlgTupleType} <: AbstractOperatorSplittingAlgorithm
-    inner_algs::AlgTupleType
-    function StrangMarchuk(inner_algs::T) where {T <: Tuple}
-        length(inner_algs) == 2 || throw(
-            ArgumentError("StrangMarchuk requires exactly 2 inner algorithms, got $(length(inner_algs))")
-        )
-        return new{T}(inner_algs)
-    end
+    inner_algs::AlgTupleType # Tuple of timesteppers for inner problems
 end
 
 function Base.show(io::IO, alg::StrangMarchuk)
@@ -102,6 +98,49 @@ function init_cache(
     return StrangMarchukCache(u, uprev)
 end
 
+# Forward pass: A₁(dt/2) → … → Aₙ₋₁(dt/2) → Aₙ(dt)
+@unroll function _sm_forward_pass!(parent, children::Tuple, half_dt, dt)
+    N = length(children)
+    i = 0
+    @unroll for child in children
+        i += 1
+        step_dt = i < N ? half_dt : dt
+
+        idxs = parent.child_solution_indices[i]
+        sync = parent.child_synchronizers[i]
+
+        @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
+        @timeit_debug "time solve" advance_solution_by!(parent, child, step_dt)
+        if _child_failed(child)
+            parent.force_stepfail = true
+            return
+        end
+
+        backward_sync_subintegrator!(parent, child, idxs, sync)
+    end
+end
+
+# Reverse pass: Aₙ₋₁(dt/2) → … → A₁(dt/2)
+@unroll function _sm_reverse_pass!(parent, rev_front::Tuple, half_dt, N)
+    j = 0
+    @unroll for child in rev_front
+        j += 1
+        i = N - j
+
+        idxs = parent.child_solution_indices[i]
+        sync = parent.child_synchronizers[i]
+
+        @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
+        @timeit_debug "time solve" advance_solution_by!(parent, child, half_dt)
+        if _child_failed(child)
+            parent.force_stepfail = true
+            return
+        end
+
+        backward_sync_subintegrator!(parent, child, idxs, sync)
+    end
+end
+
 function _perform_step!(
         parent,
         children::Tuple,
@@ -109,54 +148,22 @@ function _perform_step!(
         dt
     )
     half_dt = dt / 2
+    N = length(children)
 
-    # A(dt/2)
-    let child = children[1]
-        idxs = parent.child_solution_indices[1]
-        sync = parent.child_synchronizers[1]
-        @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
-        @timeit_debug "time solve" advance_solution_by!(parent, child, half_dt)
-        if _child_failed(child)
-            parent.force_stepfail = true
-            return
-        end
-        backward_sync_subintegrator!(parent, child, idxs, sync)
-    end
+    _sm_forward_pass!(parent, children, half_dt, dt)
+    parent.force_stepfail && return
 
-    # B(dt)
-    let child = children[2]
-        idxs = parent.child_solution_indices[2]
-        sync = parent.child_synchronizers[2]
-        @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
-        @timeit_debug "time solve" advance_solution_by!(parent, child, dt)
-        if _child_failed(child)
-            parent.force_stepfail = true
-            return
-        end
-        backward_sync_subintegrator!(parent, child, idxs, sync)
-    end
-
-    # If B contaminated the solution (e.g. NaN), skip the second A step
-    # and let the outer check_error! detect instability on the next iteration.
     if !all(isfinite, parent.u)
-        _force_set_time!(children[1], children[2].t)
+        for i in 1:(N - 1)
+            _force_set_time!(children[i], children[N].t)
+        end
         return
     end
 
-    # A(dt/2)
-    let child = children[1]
-        idxs = parent.child_solution_indices[1]
-        sync = parent.child_synchronizers[1]
-        @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
-        @timeit_debug "time solve" advance_solution_by!(parent, child, half_dt)
-        if _child_failed(child)
-            parent.force_stepfail = true
-            return
-        end
-        backward_sync_subintegrator!(parent, child, idxs, sync)
-    end
+    _sm_reverse_pass!(parent, reverse(children[1:(end - 1)]), half_dt, N)
+    parent.force_stepfail && return
 
-    # Snap child 1's accumulated time (two half-steps) to match child 2's
-    # (one full step) to prevent floating-point drift.
-    try_snap_children_to_tstop!(children[1], children[2].t)
+    for i in 1:(N - 1)
+        try_snap_children_to_tstop!(children[i], children[N].t)
+    end
 end

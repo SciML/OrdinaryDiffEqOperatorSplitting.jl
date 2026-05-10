@@ -288,6 +288,39 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
         end
     end
 
+    @testset "StrangMarchuk with 3 operators" begin
+        dt = 0.01π
+        # f1 + f3 + f3 = f1 + f2, so the reference solution is the same trueu.
+        f1dofs = [1, 2, 3]
+        f3dofs = [1, 3]
+        fsplit3 = GenericSplitFunction((f1, f3, f3), (f1dofs, f3dofs, f3dofs))
+        prob3 = OperatorSplittingProblem(fsplit3, u0, tspan)
+        nsteps = ceil(Int, (tspan[2] - tspan[1]) / dt)
+
+        @testset "$tstepper" for tstepper in (
+                StrangMarchuk((Euler(), Euler(), Euler())),
+                StrangMarchuk((Tsit5(), Euler(), Tsit5())),
+                StrangMarchuk((Tsit5(), Tsit5(), Tsit5())),
+            )
+            integrator = DiffEqBase.init(
+                prob3, tstepper, dt = dt, verbose = true, alias_u0 = false, adaptive = false
+            )
+            DiffEqBase.solve!(integrator)
+            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
+            @test isapprox(integrator.u, trueu, atol = 1.0e-6)
+            @test integrator.t ≈ tspan[2]
+            @test integrator.iter == nsteps
+
+            sub1 = integrator.child_subintegrators[1]
+            sub2 = integrator.child_subintegrators[2]
+            sub3 = integrator.child_subintegrators[3]
+            # Palindromic: children 1 & 2 get two half-steps, child 3 gets one full step
+            @test sub1.iter == 2 * nsteps
+            @test sub2.iter == 2 * nsteps
+            @test sub3.iter == nsteps
+        end
+    end
+
     @testset "Convergence order" begin
         # Use non-commuting operators so splitting error is non-zero.
         # A = diag(-1,-2), B = [0 0.5; 0.5 0] have [A,B] ≠ 0.
