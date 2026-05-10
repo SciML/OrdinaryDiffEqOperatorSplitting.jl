@@ -54,17 +54,12 @@ f3 = ODEFunction(ode3)
 
 @independent_variables time
 Dt = Differential(time)
-@mtkmodel TestModelODE2 begin
-    @variables begin
-        u1(time)
-        u2(time)
-    end
-    @equations begin
-        Dt(u1) ~ -0.01u2
-        Dt(u2) ~ -0.01u1
-    end
-end
-@named testmodel2 = TestModelODE2()
+@variables u1(time) u2(time)
+eqs = [
+    Dt(u1) ~ -0.01u2,
+    Dt(u2) ~ -0.01u1,
+]
+@named testmodel2 = System(eqs, time)
 testsys2 = mtkcompile(testmodel2; sort_eqs = false)
 
 # Test whether adaptive code path works in principle
@@ -202,7 +197,8 @@ end
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
+            while !SciMLBase.done(integrator)
+                DiffEqBase.step!(integrator)
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
@@ -211,7 +207,8 @@ end
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
+            while !SciMLBase.done(integrator)
+                DiffEqBase.step!(integrator)
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
@@ -255,7 +252,8 @@ end
             @test integrator.dt == dt
             @test integrator.dt == integrator.dtcache
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
+            while !SciMLBase.done(integrator)
+                DiffEqBase.step!(integrator)
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
@@ -264,7 +262,8 @@ end
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
+            while !SciMLBase.done(integrator)
+                DiffEqBase.step!(integrator)
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
@@ -312,5 +311,67 @@ end
                     (DiffEqBase.ReturnCode.Unstable, DiffEqBase.ReturnCode.DtNaN)
             end
         end
+    end
+
+    @testset "reinit! resets dtcache when dt changes" begin
+        dt_coarse = 0.1
+        dt_fine = dt_coarse / 2
+
+        fsplit_rc = GenericSplitFunction((f1, f2), ([1, 2, 3], [1, 3]))
+        prob_rc = OperatorSplittingProblem(fsplit_rc, u0, tspan)
+        tstepper_rc = LieTrotterGodunov((Euler(), Euler()))
+
+        integrator_rc = DiffEqBase.init(prob_rc, tstepper_rc; dt = dt_coarse, alias_u0 = false)
+        DiffEqBase.solve!(integrator_rc)
+        @test integrator_rc.sol.retcode == DiffEqBase.ReturnCode.Success
+        @test integrator_rc.dtcache ≈ dt_coarse
+
+        DiffEqBase.reinit!(integrator_rc; dt = dt_fine)
+        @test integrator_rc.dt ≈ dt_fine
+        @test integrator_rc.dtcache ≈ dt_fine
+        DiffEqBase.solve!(integrator_rc)
+        @test integrator_rc.sol.retcode == DiffEqBase.ReturnCode.Success
+        @test integrator_rc.dtcache ≈ dt_fine
+    end
+
+    @testset "Nested instability propagation" begin
+        dt = 0.01π
+
+        function ode_nan_nested(du, u, p, t)
+            du[1] = NaN
+            du[2] = 0.01u[1]
+        end
+        f_nan_nested = ODEFunction(ode_nan_nested)
+
+        # Inner split: one leg produces NaN, nested inside an outer split.
+        # f3dofs_n = [1,2] indexes into the 2-element view selected by f2dofs = [1,3].
+        fsplit_inner_n = GenericSplitFunction((f3, f_nan_nested), ([1, 2], [1, 2]))
+        fsplit_outer_n = GenericSplitFunction((f1, fsplit_inner_n), ([1, 2, 3], [1, 3]))
+        prob_nested = OperatorSplittingProblem(fsplit_outer_n, u0, tspan)
+
+        tstepper_n = LieTrotterGodunov((Euler(), LieTrotterGodunov((Euler(), Euler()))))
+        integrator_n = DiffEqBase.init(prob_nested, tstepper_n; dt = dt, alias_u0 = false)
+        DiffEqBase.solve!(integrator_n)
+        @test integrator_n.sol.retcode ∈ (DiffEqBase.ReturnCode.Unstable, DiffEqBase.ReturnCode.DtNaN)
+    end
+
+    @testset "verbose=false suppresses warnings without affecting retcode" begin
+        dt = 0.01π
+
+        function ode_nan_quiet(du, u, p, t)
+            du[1] = NaN
+            du[2] = 0.01u[1]
+        end
+        f_nan_quiet = ODEFunction(ode_nan_quiet)
+
+        fsplit_q = GenericSplitFunction((f1, f_nan_quiet), ([1, 2, 3], [1, 3]))
+        prob_q = OperatorSplittingProblem(fsplit_q, u0, tspan)
+
+        integrator_q = DiffEqBase.init(
+            prob_q, LieTrotterGodunov((Euler(), Euler()));
+            dt = dt, verbose = false, alias_u0 = false
+        )
+        DiffEqBase.solve!(integrator_q)
+        @test integrator_q.sol.retcode ∈ (DiffEqBase.ReturnCode.Unstable, DiffEqBase.ReturnCode.DtNaN)
     end
 end

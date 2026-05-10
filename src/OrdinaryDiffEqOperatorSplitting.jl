@@ -6,21 +6,19 @@ timeit_debug_enabled() = false
 import Unrolled: @unroll
 
 import SciMLBase, DiffEqBase, DataStructures
-import SciMLBase: ReturnCode
+import SciMLBase: ReturnCode, DEStats
 import SciMLBase: DEIntegrator, NullParameters, isadaptive
 
 import RecursiveArrayTools
+import LinearAlgebra
 
 import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isdtchangeable,
-    stepsize_controller!, step_accept_controller!, step_reject_controller!
+    stepsize_controller!, step_accept_controller!, step_reject_controller!,
+    DEOptions
 
-# In OrdinaryDiffEq v7 / DiffEqBase v7, passing verbose::Bool to inner ODE
-# integrators is no longer supported. Convert Bool → DEVerbosity when available.
-@static if isdefined(DiffEqBase, :DEVerbosity)
-    _inner_verbose(verbose::Bool) = verbose ? DiffEqBase.DEFAULT_VERBOSE : DiffEqBase.DEVerbosity(DiffEqBase.None())
-else
-    _inner_verbose(verbose::Bool) = verbose
-end
+# DiffEqBase v7 no longer accepts verbose::Bool for inner ODE integrators; convert to DEVerbosity.
+_inner_verbose(verbose::Bool) = verbose ? DiffEqBase.DEFAULT_VERBOSE : DiffEqBase.DEVerbosity(DiffEqBase.None())
+_inner_verbose(verbose::DiffEqBase.DEVerbosity) = verbose
 
 abstract type AbstractOperatorSplitFunction <: SciMLBase.AbstractODEFunction{true} end
 abstract type AbstractOperatorSplittingAlgorithm end
