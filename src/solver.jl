@@ -153,6 +153,14 @@ function _perform_step!(
     _sm_forward_pass!(parent, children, half_dt, dt)
     parent.force_stepfail && return
 
+    # If the forward pass produced NaN/Inf in `parent.u`, skip the reverse
+    # pass: the next reverse-pass `forward_sync_subintegrator!` would copy
+    # the unstable state into a child whose inner integrator then detects
+    # it during `step!` and hard-throws via the leaf `advance_solution_by!`.
+    # Returning here lets the outer `check_error!` see the unstable `u` and
+    # finish with `Unstable` / `DtNaN` retcode on the next iteration. The
+    # non-master children only got `dt/2`; force their `t` to the master's
+    # so `validate_time_point` doesn't assert on the half-step gap.
     if !all(isfinite, parent.u)
         for i in 1:(N - 1)
             _force_set_time!(children[i], children[N].t)
@@ -163,8 +171,5 @@ function _perform_step!(
     _sm_reverse_pass!(parent, reverse(children[1:(end - 1)]), half_dt, N)
     parent.force_stepfail && return
 
-    for i in 1:(N - 1)
-        try_snap_children_to_tstop!(children[i], children[N].t)
-    end
     return
 end

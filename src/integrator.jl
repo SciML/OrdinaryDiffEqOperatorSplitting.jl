@@ -605,6 +605,11 @@ function step_footer!(integrator::AnySplitIntegrator)
         integrator.last_step_failed = false
         integrator.tprev = integrator.t
         integrator.t = fixed_t_for_floatingpoint_error!(integrator, ttmp)
+        # Children that step with subdivided dt (e.g. StrangMarchuk's `dt/2`
+        # halves) accumulate ulp-level drift from the parent's exact `t`.
+        # Re-anchor children to the parent's canonical time here so the
+        # drift cannot accumulate across outer steps.
+        try_snap_children_to_tstop!.(integrator.child_subintegrators, integrator.t)
         step_accept_controller!(integrator)
     elseif integrator.force_stepfail
         if isadaptive(integrator)
