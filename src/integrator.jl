@@ -611,6 +611,7 @@ function step_footer!(integrator::AnySplitIntegrator)
         # drift cannot accumulate across outer steps.
         try_snap_children_to_tstop!.(integrator.child_subintegrators, integrator.t)
         step_accept_controller!(integrator)
+        validate_time_point(integrator)
     elseif integrator.force_stepfail
         if isadaptive(integrator)
             step_reject_controller!(integrator)
@@ -622,7 +623,6 @@ function step_footer!(integrator::AnySplitIntegrator)
         end
         integrator.last_step_failed = true
     end
-    validate_time_point(integrator)
     return nothing
 end
 
@@ -912,26 +912,12 @@ function advance_solution_by!(
         dt
     )
     SciMLBase.step!(sub, dt, true)
-
-    # Unrecoverable failure: error immediately regardless of adaptive/non-adaptive
-    if !SciMLBase.successful_retcode(sub.status.retcode) &&
-            sub.status.retcode != ReturnCode.Default
-        error("Inner integrator failed unrecoverably with retcode \
-               $(sub.status.retcode) at t=$(child.t). Aborting.")
-    end
     return nothing
 end
 
 # Leaf disptach
 function advance_solution_by!(outer::AnySplitIntegrator, child::DEIntegrator, dt)
     SciMLBase.step!(child, dt, true)
-
-    # Unrecoverable failure: error immediately regardless of adaptive/non-adaptive
-    if !SciMLBase.successful_retcode(child.sol.retcode) &&
-            child.sol.retcode != ReturnCode.Default
-        error("Inner integrator failed unrecoverably with retcode \
-               $(child.sol.retcode) at t=$(child.t). Aborting.")
-    end
     return nothing
 end
 

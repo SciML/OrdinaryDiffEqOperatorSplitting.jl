@@ -162,21 +162,6 @@ function OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator::AnySplitIntegrator)
     return nothing
 end
 
-# Force-set the local time of an integrator (and recursively its children).
-# Used on the StrangMarchuk NaN-bailout path where a non-master child has only
-# finished half the outer step and we need to skip its remaining sub-steps:
-# we still have to advance its `t` to match the master so the next outer
-# iteration's `check_error!` can see the unstable `u` and report the failure
-# without `validate_time_point` asserting on the half-step gap.
-_force_set_time!(child::DEIntegrator, t) = (child.t = t)
-function _force_set_time!(child::SplitSubIntegrator, t)
-    child.t = t
-    for sub in child.child_subintegrators
-        _force_set_time!(sub, t)
-    end
-    return
-end
-
 # Check time-step information consistency
 validate_time_point(integrator::AnySplitIntegrator) = validate_time_point(integrator, integrator.child_subintegrators)
 function validate_time_point(parent, child::SplitSubIntegrator)
