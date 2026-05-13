@@ -49,3 +49,18 @@ for (u, t) in TimeChoiceIterator(integrator, 0.0:0.5:1.0)
     @show t, u
 end
 ```
+
+For second-order accuracy, use the `StrangMarchuk` algorithm instead.
+It performs the symmetric palindromic splitting
+A₁(Δt/2) → … → Aₙ(Δt) → … → A₁(Δt/2):
+
+```julia
+alg = StrangMarchuk(
+    (Euler(), Euler())
+)
+
+integrator = init(prob, alg, dt = 0.1)
+for (u, t) in TimeChoiceIterator(integrator, 0.0:0.5:1.0)
+    @show t, u
+end
+```

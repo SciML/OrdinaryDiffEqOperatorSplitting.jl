@@ -12,8 +12,9 @@ OperatorSplittingProblem
 GenericSplitFunction
 ```
 
-## Solver
+## Solvers
 
 ```@docs
 LieTrotterGodunov
+StrangMarchuk
 ```
