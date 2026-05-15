@@ -1,5 +1,6 @@
 using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqOperatorSplitting
+using SciMLIterators: TimeChoiceIterator
 using Test
 
 f(du, u, p, t) = @. du = -u
@@ -15,18 +16,8 @@ splitting_solver = LieTrotterGodunov((Euler(),))
 
 integrator1 = init(prob1, splitting_solver; dt = dt)
 integrator2 = init(prob2, Euler(); dt = dt)
-
-# Compare solutions at every 2*dt time point.
-# Original test used TimeChoiceIterator (removed in DiffEqBase v7).
-nsteps = Int(round((tspan[2] - tspan[1]) / dt))
-@test integrator1.u ≈ integrator2.u
-@test integrator1.t ≈ integrator2.t
-for _ in 1:(nsteps ÷ 2)
-    step!(integrator1)
-    step!(integrator1)
-    step!(integrator2)
-    step!(integrator2)
-    @test integrator1.u ≈ integrator2.u
-    @test integrator1.t ≈ integrator2.t
+for ((u1, t1), (u2, t2)) in zip(TimeChoiceIterator(integrator1, tspan[1]:(2dt):tspan[2]), TimeChoiceIterator(integrator2, tspan[1]:(2dt):tspan[2]))
+    @test u1 ≈ u2
+    @test t1 ≈ t2
 end
 @test integrator1.iter == integrator2.iter

@@ -1,3 +1,11 @@
+mutable struct IntegratorStats
+    naccept::Int64
+    nreject::Int64
+    # TODO inner solver stats
+end
+
+IntegratorStats() = IntegratorStats(0, 0)
+
 Base.@kwdef mutable struct IntegratorOptions{tType, fType, F3}
     adaptive::Bool
     dtmin::tType = eps(Float64)
@@ -86,7 +94,7 @@ mutable struct SplitSubIntegrator{
     last_step_failed::Bool
     u_modified::Bool # TODO we can probably remove this
     status::SplitSubIntegratorStatus
-    stats::DEStats
+    stats::IntegratorStats
     cache::cacheType
     child_subintegrators::childSubintType   # Tuple
     solution_indices::solidxType
@@ -156,7 +164,7 @@ mutable struct OperatorSplittingIntegrator{
     iter::Int
     controller::controllerType
     opts::optsType       # DEOptions
-    stats::DEStats
+    stats::IntegratorStats
     tdir::tType
 end
 
@@ -329,7 +337,7 @@ function SciMLBase.__init(
         0,
         controller,
         opts,
-        DEStats(0),
+        IntegratorStats(),
         tdir_val,
     )
     DiffEqBase.initialize!(callback, u0, t0, integrator)
@@ -1083,7 +1091,7 @@ function _build_child(
         controller,
         false, false, false,  # force_stepfail, last_step_failed, u_modified
         SplitSubIntegratorStatus(),
-        DEStats(0),
+        IntegratorStats(),
         level_cache,
         child_subintegrators,
         solution_indices,

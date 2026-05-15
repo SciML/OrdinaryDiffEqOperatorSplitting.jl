@@ -6,7 +6,7 @@ timeit_debug_enabled() = false
 import Unrolled: @unroll
 
 import SciMLBase, DiffEqBase, DataStructures
-import SciMLBase: ReturnCode, DEStats
+import SciMLBase: ReturnCode
 import SciMLBase: DEIntegrator, NullParameters, isadaptive
 
 import RecursiveArrayTools
