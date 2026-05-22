@@ -33,12 +33,12 @@ using OrdinaryDiffEqLowOrderRK, OrdinaryDiffEqOperatorSplitting
 function ode_true(du, u, p, t)
     du .-= 0.1u
     du[1] -= 0.01u[3]
-    du[3] -= 0.01u[1]
+    return du[3] -= 0.01u[1]
 end
 
 # This is the first operator of the ODE.
 function ode1(du, u, p, t)
-    @. du = -0.1u
+    return @. du = -0.1u
 end
 f1 = ODEFunction(ode1)
 f1dofs = [1, 2, 3]
@@ -46,7 +46,7 @@ f1dofs = [1, 2, 3]
 # This is the second operator of the ODE.
 function ode2(du, u, p, t)
     du[1] = -0.01u[2]
-    du[2] = -0.01u[1]
+    return du[2] = -0.01u[1]
 end
 f2 = ODEFunction(ode2)
 f2dofs = [1, 3]
@@ -75,41 +75,3 @@ end
 ## Available Solvers
 
 For the list of available solvers, please refer to the [OrdinaryDiffEqOperatorSplitting.jl Solvers](https://sciml.github.io/OrdinaryDiffEqOperatorSplitting.jl/dev/api-reference/#Solvers) pages.
-
-## Multirate splitting
-
-Operators with different stiffness or cost can use different substep sizes via
-the `inner_dts` keyword. Each entry sets the corresponding child sub-integrator's
-`dt` (or `nothing` to share the outer `dt`).
-
-```julia
-using OrdinaryDiffEqOperatorSplitting
-using OrdinaryDiffEqLowOrderRK              # Euler
-
-# Three-state toy system: y' = (A + B) y, where A is "fast" and B is "slow".
-function ode_A!(du, u, p, t)
-    du[1] = -0.1 * u[1]
-    du[2] = -0.1 * u[2]
-    du[3] = -0.1 * u[3]
-end
-function ode_B!(du, u, p, t)
-    du[1] = -0.01 * u[3]
-    du[3] = -0.01 * u[1]
-end
-fA = ODEFunction(ode_A!)
-fB = ODEFunction(ode_B!)
-fsplit = GenericSplitFunction((fA, fB), ([1, 2, 3], [1, 3]))
-prob   = OperatorSplittingProblem(fsplit, [1.0, 1.0, 1.0], (0.0, 10.0))
-
-dt_outer = 0.5            # Strang macro step (slow operator)
-dt_inner = 0.05           # fast operator substep
-
-sol = solve(prob, StrangMarchuk((Euler(), Euler()));
-            dt        = dt_outer,
-            inner_dts = (dt_inner, dt_outer),
-            adaptive  = false)
-```
-
-The fast child takes `dt_outer / 2 / dt_inner = 5` substeps inside each Strang
-half-step; the slow child takes one Euler step per outer `dt_outer`. The same
-kwarg works on `reinit!`: pass it again to preserve the multirate configuration.
