@@ -404,8 +404,8 @@ end
     f1dofs = [1, 2, 3]
     f2dofs = [1, 3]
     fsplit = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
-    prob   = OperatorSplittingProblem(fsplit, u0, tspan)
-    alg    = StrangMarchuk((Euler(), Euler()))
+    prob = OperatorSplittingProblem(fsplit, u0, tspan)
+    alg = StrangMarchuk((Euler(), Euler()))
 
     # Wrong length.
     @test_throws ArgumentError DiffEqBase.init(
@@ -451,8 +451,8 @@ end
     f3dofs = [1, 2]
     fsplit_inner = GenericSplitFunction((f3, f3), (f3dofs, f3dofs))
     fsplit_outer = GenericSplitFunction((f1, fsplit_inner), (f1dofs, f2dofs))
-    prob   = OperatorSplittingProblem(fsplit_outer, u0, tspan)
-    alg    = StrangMarchuk((Euler(), StrangMarchuk((Euler(), Euler()))))
+    prob = OperatorSplittingProblem(fsplit_outer, u0, tspan)
+    alg = StrangMarchuk((Euler(), StrangMarchuk((Euler(), Euler()))))
 
     @test_throws ArgumentError DiffEqBase.init(
         prob, alg; dt = 0.1, inner_dts = (0.01, 0.01),
@@ -473,12 +473,12 @@ end
     # tstop accumulation in the leaf ODE integrator over many outer steps.
     local_tspan = (0.0, 1.0)
     dt = 0.25         # nsteps = 4
-    R  = 4            # dt_child = dt/R = 0.0625; half_dt/dt_child = 2 exactly
+    R = 4            # dt_child = dt/R = 0.0625; half_dt/dt_child = 2 exactly
     f1dofs = [1, 2, 3]
     f2dofs = [1, 3]
     fsplit = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
-    prob   = OperatorSplittingProblem(fsplit, u0, local_tspan)
-    alg    = StrangMarchuk((Euler(), Euler()))
+    prob = OperatorSplittingProblem(fsplit, u0, local_tspan)
+    alg = StrangMarchuk((Euler(), Euler()))
 
     integrator = DiffEqBase.init(
         prob, alg;
@@ -508,8 +508,8 @@ end
     f1dofs = [1, 2, 3]
     f2dofs = [1, 3]
     fsplit = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
-    prob   = OperatorSplittingProblem(fsplit, u0, tspan)
-    alg    = StrangMarchuk((Tsit5(), Euler()))
+    prob = OperatorSplittingProblem(fsplit, u0, tspan)
+    alg = StrangMarchuk((Tsit5(), Euler()))
 
     integrator = DiffEqBase.init(
         prob, alg;
@@ -526,8 +526,8 @@ end
     f1dofs = [1, 2, 3]
     f2dofs = [1, 3]
     fsplit = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
-    prob   = OperatorSplittingProblem(fsplit, u0, tspan)
-    alg    = StrangMarchuk((Euler(), Euler()))
+    prob = OperatorSplittingProblem(fsplit, u0, tspan)
+    alg = StrangMarchuk((Euler(), Euler()))
 
     integrator = DiffEqBase.init(
         prob, alg;
@@ -564,12 +564,12 @@ end
 @testset "inner_dts via DiffEqBase.solve" begin
     local_tspan = (0.0, 1.0)
     dt = 0.25
-    R  = 4
+    R = 4
     f1dofs = [1, 2, 3]
     f2dofs = [1, 3]
     fsplit = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
-    prob   = OperatorSplittingProblem(fsplit, u0, local_tspan)
-    alg    = StrangMarchuk((Euler(), Euler()))
+    prob = OperatorSplittingProblem(fsplit, u0, local_tspan)
+    alg = StrangMarchuk((Euler(), Euler()))
 
     sol = DiffEqBase.solve(
         prob, alg;

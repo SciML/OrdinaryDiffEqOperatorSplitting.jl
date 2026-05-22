@@ -185,29 +185,41 @@ const AnySplitIntegrator = Union{SplitSubIntegrator, OperatorSplittingIntegrator
 # ---------------------------------------------------------------------------
 function _validate_inner_dts(inner_dts, f::AbstractOperatorSplitFunction)
     inner_dts === nothing && return nothing
-    inner_dts isa Tuple || throw(ArgumentError(
-        "inner_dts must be a Tuple or nothing, got $(typeof(inner_dts))"))
+    inner_dts isa Tuple || throw(
+        ArgumentError(
+            "inner_dts must be a Tuple or nothing, got $(typeof(inner_dts))"
+        )
+    )
     n = num_operators(f)
-    length(inner_dts) == n || throw(ArgumentError(
-        "inner_dts has length $(length(inner_dts)), expected $n " *
-        "(= num_operators of the split problem)"))
+    length(inner_dts) == n || throw(
+        ArgumentError(
+            "inner_dts has length $(length(inner_dts)), expected $n " *
+                "(= num_operators of the split problem)"
+        )
+    )
     for (i, d) in enumerate(inner_dts)
         d === nothing && continue
-        (d isa Number && isfinite(d) && d > zero(d)) || throw(ArgumentError(
-            "inner_dts[$i] must be a finite positive Number or nothing, got $d"))
+        (d isa Number && isfinite(d) && d > zero(d)) || throw(
+            ArgumentError(
+                "inner_dts[$i] must be a finite positive Number or nothing, got $d"
+            )
+        )
         op_i = get_operator(f, i)
         if op_i isa AbstractOperatorSplitFunction
-            throw(ArgumentError(
-                "inner_dts[$i] given for a nested operator-splitting child; " *
-                "nested multirate is not yet supported. Pass nothing for that " *
-                "index, or flatten the split."))
+            throw(
+                ArgumentError(
+                    "inner_dts[$i] given for a nested operator-splitting child; " *
+                        "nested multirate is not yet supported. Pass nothing for that " *
+                        "index, or flatten the split."
+                )
+            )
         end
     end
     return nothing
 end
 
 @inline _resolve_child_dt(::Nothing, _i, dt_outer) = dt_outer
-@inline _resolve_child_dt(t::Tuple, i, dt_outer)   =
+@inline _resolve_child_dt(t::Tuple, i, dt_outer) =
     t[i] === nothing ? dt_outer : t[i]
 
 # ---------------------------------------------------------------------------
@@ -252,38 +264,6 @@ end
 # ---------------------------------------------------------------------------
 # __init
 # ---------------------------------------------------------------------------
-"""
-    init(prob::OperatorSplittingProblem, alg; dt, inner_dts = nothing, kwargs...)
-
-Initialise an operator-splitting integrator.
-
-`dt` is the outer macro step (the Lie / Strang sandwich step).
-
-`inner_dts::Union{Nothing, Tuple}` configures multirate splitting:
-
-- `nothing` (default): every sub-integrator uses the outer `dt` (single-rate).
-- `Tuple` of length `num_operators(prob.f)`: each entry sets the corresponding
-  child sub-integrator's `dt`. `nothing` at index `i` falls back to the outer `dt`.
-
-For non-adaptive inner algorithms (e.g. `Euler`, `SSPRK33`) the entry becomes the
-fixed substep size: the child subcycles until reaching the parent's requested
-advance. For adaptive inner algorithms (e.g. `Tsit5`) the entry is a starting
-hint via `set_proposed_dt!`; the adaptive controller takes over after the first
-step.
-
-Nested operator splittings (a child that is itself a `GenericSplitFunction`)
-are not supported in `inner_dts` yet: pass `nothing` for that index or flatten
-the split.
-
-# Example
-
-```julia
-sol = solve(prob, StrangMarchuk((SSPRK33(), Euler()));
-            dt        = 0.01,
-            inner_dts = (0.001, 0.01),
-            adaptive  = false)
-```
-"""
 function SciMLBase.__init(
         prob::OperatorSplittingProblem,
         alg::AbstractOperatorSplittingAlgorithm,
@@ -391,19 +371,6 @@ end
 # ---------------------------------------------------------------------------
 SciMLBase.has_reinit(integrator::OperatorSplittingIntegrator) = true
 
-"""
-    reinit!(integrator::OperatorSplittingIntegrator, u0 = integrator.sol.prob.u0;
-            t0, tf, dt, inner_dts = nothing, kwargs...)
-
-Re-initialise the integrator for another solve over `[t0, tf]`.
-
-`inner_dts` has the same semantics as in `init`:
-
-- `nothing` (default) or omitted: the outer `dt` is broadcast to every child
-  sub-integrator (matching the pre-multirate behavior).
-- `Tuple`: per-child override. To preserve a multirate configuration from
-  `init` across reinit, re-pass the same Tuple here.
-"""
 function DiffEqBase.reinit!(
         integrator::OperatorSplittingIntegrator,
         u0 = integrator.sol.prob.u0;
