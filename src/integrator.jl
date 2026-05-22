@@ -181,8 +181,109 @@ end
 const AnySplitIntegrator = Union{SplitSubIntegrator, OperatorSplittingIntegrator}
 
 # ---------------------------------------------------------------------------
+# inner_dts: per-child sub-integrator step sizes for multirate splitting
+# ---------------------------------------------------------------------------
+function _validate_inner_dts(inner_dts, f::AbstractOperatorSplitFunction)
+    inner_dts === nothing && return nothing
+    inner_dts isa Tuple || throw(ArgumentError(
+        "inner_dts must be a Tuple or nothing, got $(typeof(inner_dts))"))
+    n = num_operators(f)
+    length(inner_dts) == n || throw(ArgumentError(
+        "inner_dts has length $(length(inner_dts)), expected $n " *
+        "(= num_operators of the split problem)"))
+    for (i, d) in enumerate(inner_dts)
+        d === nothing && continue
+        (d isa Number && isfinite(d) && d > zero(d)) || throw(ArgumentError(
+            "inner_dts[$i] must be a finite positive Number or nothing, got $d"))
+        op_i = get_operator(f, i)
+        if op_i isa AbstractOperatorSplitFunction
+            throw(ArgumentError(
+                "inner_dts[$i] given for a nested operator-splitting child; " *
+                "nested multirate is not yet supported. Pass nothing for that " *
+                "index, or flatten the split."))
+        end
+    end
+    return nothing
+end
+
+@inline _resolve_child_dt(::Nothing, _i, dt_outer) = dt_outer
+@inline _resolve_child_dt(t::Tuple, i, dt_outer)   =
+    t[i] === nothing ? dt_outer : t[i]
+
+# ---------------------------------------------------------------------------
+# DiffEqBase.solve override: same rationale as the init override below it.
+# Bypass SciMLBase.checkkwargs so that package-specific kwargs (e.g.
+# inner_dts) reach __solve without being rejected as unrecognised.
+# ---------------------------------------------------------------------------
+function DiffEqBase.solve(
+        prob::OperatorSplittingProblem,
+        alg::AbstractOperatorSplittingAlgorithm,
+        args...;
+        sensealg = nothing,
+        u0 = nothing,
+        p = nothing,
+        kwargs...
+    )
+    merged = DiffEqBase.has_kwargs(prob) && !isempty(prob.kwargs) ?
+        merge(values(prob.kwargs), kwargs) : kwargs
+    return SciMLBase.__solve(prob, alg, args...; merged...)
+end
+
+# ---------------------------------------------------------------------------
+# DiffEqBase.init override: bypass SciMLBase.checkkwargs so that
+# package-specific kwargs (e.g. inner_dts) reach __init without being
+# rejected as unrecognised. Problem-level kwargs are merged with caller
+# kwargs here (caller wins on conflict), mirroring DiffEqBase.init_call.
+# ---------------------------------------------------------------------------
+function DiffEqBase.init(
+        prob::OperatorSplittingProblem,
+        alg::AbstractOperatorSplittingAlgorithm,
+        args...;
+        sensealg = nothing,
+        u0 = nothing,
+        p = nothing,
+        kwargs...
+    )
+    merged = DiffEqBase.has_kwargs(prob) && !isempty(prob.kwargs) ?
+        merge(values(prob.kwargs), kwargs) : kwargs
+    return SciMLBase.__init(prob, alg, args...; merged...)
+end
+
+# ---------------------------------------------------------------------------
 # __init
 # ---------------------------------------------------------------------------
+"""
+    init(prob::OperatorSplittingProblem, alg; dt, inner_dts = nothing, kwargs...)
+
+Initialise an operator-splitting integrator.
+
+`dt` is the outer macro step (the Lie / Strang sandwich step).
+
+`inner_dts::Union{Nothing, Tuple}` configures multirate splitting:
+
+- `nothing` (default): every sub-integrator uses the outer `dt` (single-rate).
+- `Tuple` of length `num_operators(prob.f)`: each entry sets the corresponding
+  child sub-integrator's `dt`. `nothing` at index `i` falls back to the outer `dt`.
+
+For non-adaptive inner algorithms (e.g. `Euler`, `SSPRK33`) the entry becomes the
+fixed substep size: the child subcycles until reaching the parent's requested
+advance. For adaptive inner algorithms (e.g. `Tsit5`) the entry is a starting
+hint via `set_proposed_dt!`; the adaptive controller takes over after the first
+step.
+
+Nested operator splittings (a child that is itself a `GenericSplitFunction`)
+are not supported in `inner_dts` yet: pass `nothing` for that index or flatten
+the split.
+
+# Example
+
+```julia
+sol = solve(prob, StrangMarchuk((SSPRK33(), Euler()));
+            dt        = 0.01,
+            inner_dts = (0.001, 0.01),
+            adaptive  = false)
+```
+"""
 function SciMLBase.__init(
         prob::OperatorSplittingProblem,
         alg::AbstractOperatorSplittingAlgorithm,
@@ -199,12 +300,14 @@ function SciMLBase.__init(
         # controller = OrdinaryDiffEqCore.PIController(0.14, 0.08),
         alias_u0 = false,
         verbose = true,
+        inner_dts = nothing,
         kwargs...
     )
     (; u0, p) = prob
     t0, tf = prob.tspan
 
     dt > zero(dt) || error("dt must be positive")
+    _validate_inner_dts(inner_dts, prob.f)
     dtcache = dt
     dt = tf > t0 ? dt : -dt
     tType = typeof(dt)
@@ -244,7 +347,8 @@ function SciMLBase.__init(
         1:length(u),
         t0, dt, tf,
         tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose
+        adaptive, verbose,
+        inner_dts,
     )
 
     cache = init_cache(
@@ -287,6 +391,19 @@ end
 # ---------------------------------------------------------------------------
 SciMLBase.has_reinit(integrator::OperatorSplittingIntegrator) = true
 
+"""
+    reinit!(integrator::OperatorSplittingIntegrator, u0 = integrator.sol.prob.u0;
+            t0, tf, dt, inner_dts = nothing, kwargs...)
+
+Re-initialise the integrator for another solve over `[t0, tf]`.
+
+`inner_dts` has the same semantics as in `init`:
+
+- `nothing` (default) or omitted: the outer `dt` is broadcast to every child
+  sub-integrator (matching the pre-multirate behavior).
+- `Tuple`: per-child override. To preserve a multirate configuration from
+  `init` across reinit, re-pass the same Tuple here.
+"""
 function DiffEqBase.reinit!(
         integrator::OperatorSplittingIntegrator,
         u0 = integrator.sol.prob.u0;
@@ -297,8 +414,13 @@ function DiffEqBase.reinit!(
         tstops = integrator._tstops,
         saveat = integrator._saveat,
         reinit_callbacks = true,
-        reinit_retcode = true
+        reinit_retcode = true,
+        inner_dts = nothing,
     )
+    if inner_dts !== nothing
+        _validate_inner_dts(inner_dts, integrator.f)
+    end
+
     integrator.u .= u0
     integrator.uprev .= u0
     integrator.t = t0
@@ -331,25 +453,33 @@ function DiffEqBase.reinit!(
         integrator.child_subintegrators;
         t0, tf, dt,
         erase_sol, tstops, saveat,
-        reinit_callbacks, reinit_retcode
+        reinit_callbacks, reinit_retcode,
+        inner_dts,
     )
     return nothing
 end
 
 # --- subreinit! helpers ---
 
-# Iterate over a tuple of children (outermost call from reinit!)
+# Iterate over a tuple of children and reinit each with its resolved dt.
 @unroll function _subreinit_tuple!(
         f,
         u0,
         children::Tuple;
+        dt,
+        inner_dts = nothing,
         kwargs...
     )
     i = 1
     @unroll for child in children
-        _subreinit_child!(get_operator(f, i), u0, child; kwargs...)
+        _subreinit_child!(
+            get_operator(f, i), u0, child;
+            dt = _resolve_child_dt(inner_dts, i, dt),
+            kwargs...,
+        )
         i += 1
     end
+    return nothing
 end
 
 # Reinitialise a leaf DEIntegrator child
@@ -937,7 +1067,8 @@ function build_subintegrators(
         solution_indices,
         t0, dt, tf,
         tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose
+        adaptive, verbose,
+        inner_dts = nothing,
     )
     (; f, p) = prob
 
@@ -949,7 +1080,7 @@ function build_subintegrators(
             p[i],
             uprevouter, uouter, u_master,
             f.solution_indices[i],
-            t0, dt, tf,
+            t0, _resolve_child_dt(inner_dts, i, dt), tf,
             tstops, saveat, d_discontinuities, callback,
             adaptive, verbose
         ),

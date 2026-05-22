@@ -399,3 +399,193 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
         end
     end
 end
+
+@testset "inner_dts validation" begin
+    f1dofs = [1, 2, 3]
+    f2dofs = [1, 3]
+    fsplit = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
+    prob   = OperatorSplittingProblem(fsplit, u0, tspan)
+    alg    = StrangMarchuk((Euler(), Euler()))
+
+    # Wrong length.
+    @test_throws ArgumentError DiffEqBase.init(
+        prob, alg; dt = 0.1, inner_dts = (0.01,),
+        adaptive = false, alias_u0 = false,
+    )
+
+    # Non-Tuple input.
+    @test_throws ArgumentError DiffEqBase.init(
+        prob, alg; dt = 0.1, inner_dts = [0.01, 0.1],
+        adaptive = false, alias_u0 = false,
+    )
+
+    # Negative entry.
+    @test_throws ArgumentError DiffEqBase.init(
+        prob, alg; dt = 0.1, inner_dts = (-1.0, 0.1),
+        adaptive = false, alias_u0 = false,
+    )
+
+    # Zero entry.
+    @test_throws ArgumentError DiffEqBase.init(
+        prob, alg; dt = 0.1, inner_dts = (0.0, 0.1),
+        adaptive = false, alias_u0 = false,
+    )
+
+    # Inf entry.
+    @test_throws ArgumentError DiffEqBase.init(
+        prob, alg; dt = 0.1, inner_dts = (Inf, 0.1),
+        adaptive = false, alias_u0 = false,
+    )
+
+    # `nothing` and positive Numbers are accepted (no throw).
+    integrator = DiffEqBase.init(
+        prob, alg; dt = 0.1, inner_dts = (0.01, nothing),
+        adaptive = false, alias_u0 = false,
+    )
+    @test integrator isa OS.OperatorSplittingIntegrator
+end
+
+@testset "inner_dts rejects nested split children" begin
+    f1dofs = [1, 2, 3]
+    f2dofs = [1, 3]
+    f3dofs = [1, 2]
+    fsplit_inner = GenericSplitFunction((f3, f3), (f3dofs, f3dofs))
+    fsplit_outer = GenericSplitFunction((f1, fsplit_inner), (f1dofs, f2dofs))
+    prob   = OperatorSplittingProblem(fsplit_outer, u0, tspan)
+    alg    = StrangMarchuk((Euler(), StrangMarchuk((Euler(), Euler()))))
+
+    @test_throws ArgumentError DiffEqBase.init(
+        prob, alg; dt = 0.1, inner_dts = (0.01, 0.01),
+        adaptive = false, alias_u0 = false,
+    )
+
+    # Passing `nothing` for the nested child is allowed.
+    integrator = DiffEqBase.init(
+        prob, alg; dt = 0.1, inner_dts = (0.01, nothing),
+        adaptive = false, alias_u0 = false,
+    )
+    @test integrator isa OS.OperatorSplittingIntegrator
+end
+
+@testset "inner_dts multirate iter counts" begin
+    # Use a local tspan and exact-rational dt so that half_dt / dt_child is
+    # always an integer and tstop arithmetic is exact. This avoids floating-point
+    # tstop accumulation in the leaf ODE integrator over many outer steps.
+    local_tspan = (0.0, 1.0)
+    dt = 0.25         # nsteps = 4
+    R  = 4            # dt_child = dt/R = 0.0625; half_dt/dt_child = 2 exactly
+    f1dofs = [1, 2, 3]
+    f2dofs = [1, 3]
+    fsplit = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
+    prob   = OperatorSplittingProblem(fsplit, u0, local_tspan)
+    alg    = StrangMarchuk((Euler(), Euler()))
+
+    integrator = DiffEqBase.init(
+        prob, alg;
+        dt = dt, inner_dts = (dt / R, dt),
+        adaptive = false, alias_u0 = false, verbose = false,
+    )
+    sub1 = integrator.child_subintegrators[1]
+    sub2 = integrator.child_subintegrators[2]
+    @test sub1.dt ≈ dt / R
+    @test sub2.dt ≈ dt
+
+    nsteps = round(Int, (local_tspan[2] - local_tspan[1]) / dt)
+    DiffEqBase.solve!(integrator)
+
+    # StrangMarchuk calls child 1 twice per outer step (forward + reverse half).
+    # With child-1 dt = dt/R, each half advances R/2 substeps exactly, total R per outer step.
+    @test sub1.iter == R * nsteps
+    @test sub2.iter == nsteps
+    @test integrator.t ≈ local_tspan[2]
+
+    # Compare against the unsplit reference solution at local_tspan[2].
+    trueu_local = exp((local_tspan[2] - local_tspan[1]) * (trueA + trueB)) * u0
+    @test isapprox(integrator.u, trueu_local, atol = 1.0e-3)
+end
+
+@testset "inner_dts as adaptive hint" begin
+    f1dofs = [1, 2, 3]
+    f2dofs = [1, 3]
+    fsplit = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
+    prob   = OperatorSplittingProblem(fsplit, u0, tspan)
+    alg    = StrangMarchuk((Tsit5(), Euler()))
+
+    integrator = DiffEqBase.init(
+        prob, alg;
+        dt = 0.1, inner_dts = (1.0e-3, 0.1),
+        adaptive = false, alias_u0 = false, verbose = false,
+    )
+    sub1 = integrator.child_subintegrators[1]
+
+    # Tsit5 is adaptive: inner_dts[1] is set as the starting hint.
+    @test sub1.dt ≈ 1.0e-3
+end
+
+@testset "inner_dts reinit semantics" begin
+    f1dofs = [1, 2, 3]
+    f2dofs = [1, 3]
+    fsplit = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
+    prob   = OperatorSplittingProblem(fsplit, u0, tspan)
+    alg    = StrangMarchuk((Euler(), Euler()))
+
+    integrator = DiffEqBase.init(
+        prob, alg;
+        dt = 0.1, inner_dts = (0.025, 0.1),
+        adaptive = false, alias_u0 = false, verbose = false,
+    )
+    sub1 = integrator.child_subintegrators[1]
+    sub2 = integrator.child_subintegrators[2]
+    @test sub1.dt ≈ 0.025
+    @test sub2.dt ≈ 0.1
+
+    # Case 1: omit inner_dts. Outer dt broadcasts to all children (existing behavior).
+    DiffEqBase.reinit!(integrator, u0; tf = tspan[2], dt = 0.2)
+    @test sub1.dt ≈ 0.2
+    @test sub2.dt ≈ 0.2
+
+    # Case 2: re-pass inner_dts to preserve multirate configuration.
+    DiffEqBase.reinit!(
+        integrator, u0;
+        tf = tspan[2], dt = 0.2, inner_dts = (0.025, 0.2),
+    )
+    @test sub1.dt ≈ 0.025
+    @test sub2.dt ≈ 0.2
+
+    # Case 3: per-child override with nothing entry (entry-level fallback).
+    DiffEqBase.reinit!(
+        integrator, u0;
+        tf = tspan[2], dt = 0.2, inner_dts = (0.01, nothing),
+    )
+    @test sub1.dt ≈ 0.01
+    @test sub2.dt ≈ 0.2
+end
+
+@testset "inner_dts via DiffEqBase.solve" begin
+    local_tspan = (0.0, 1.0)
+    dt = 0.25
+    R  = 4
+    f1dofs = [1, 2, 3]
+    f2dofs = [1, 3]
+    fsplit = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
+    prob   = OperatorSplittingProblem(fsplit, u0, local_tspan)
+    alg    = StrangMarchuk((Euler(), Euler()))
+
+    sol = DiffEqBase.solve(
+        prob, alg;
+        dt = dt, inner_dts = (dt / R, dt),
+        adaptive = false, alias_u0 = false, verbose = false,
+    )
+    @test sol.retcode == ReturnCode.Success
+    @test sol.prob.tspan[2] ≈ local_tspan[2]
+
+    # Verify accuracy by replaying the same setup via init + solve!.
+    integrator2 = DiffEqBase.init(
+        prob, alg;
+        dt = dt, inner_dts = (dt / R, dt),
+        adaptive = false, alias_u0 = false, verbose = false,
+    )
+    DiffEqBase.solve!(integrator2)
+    trueu_local = exp((local_tspan[2] - local_tspan[1]) * (trueA + trueB)) * u0
+    @test isapprox(integrator2.u, trueu_local, atol = 1.0e-3)
+end
