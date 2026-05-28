@@ -30,9 +30,11 @@ end
         f::F; n::Int
     end
     (c::CR)(du, u, p, t) = (c.n += 1; c.f(du, u, p, t))
-    a = CR((du, u, p, t) -> (du .= -0.1 .* A * u), 0)
+    a = CR((du, u, p, t) -> (du .= -0.1 .* u), 0)
     b = CR((du, u, p, t) -> (du .= -u .+ 0.01 / length(u) .* sum(abs2, u)), 0)
 
+    N, dt = 100_000, 1e-3
+    u0 = ones(N); dofs = collect(1:N)
     fsplit = GenericSplitFunction((ODEFunction(a), ODEFunction(b)), (dofs, dofs))
     alg = StrangMarchuk((Euler(), Euler()))
     integ = init(
@@ -41,8 +43,9 @@ end
     )
     a.n = 0; b.n = 0
     step!(integ)
-    @test a.n == 2 * 2 # 2 solves á 2 f calls
+    @test a.n == 1 * 1 + 1 * 2 # 2 solves, where the first call respects FSAL
     @test b.n == 1 * 2 # 1 solve  á 2 f calls
+    # We also test if this is repeatable
     a.n = 0; b.n = 0
     step!(integ)
     @test a.n == 1 * 1 + 1 * 2 # 2 solves, where the first call respects FSAL

@@ -150,7 +150,7 @@ function _perform_step!(
     half_dt = dt / 2
 
     # Skip sync of for first solve, because it is already in sync
-    !is_first_iteration(parent) && mark_next_sync_continuous(parent)
+    mark_next_sync_continuous(parent)
 
     _sm_forward_pass!(parent, children, half_dt, dt)
     parent.force_stepfail && return
