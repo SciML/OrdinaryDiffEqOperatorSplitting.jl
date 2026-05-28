@@ -26,21 +26,25 @@ using Test
 end
 
 @testset "Respect FSAL (#79)" begin
-    mutable struct CR{F}; f::F; n::Int; end
-    (c::CR)(du,u,p,t) = (c.n += 1; c.f(du,u,p,t))
-    a = CR((du,u,p,t)->(du .= -0.1 .* A * u), 0)
-    b = CR((du,u,p,t)->(du .= -u .+ 0.01/length(u) .* sum(abs2,u)), 0)
+    mutable struct CR{F}
+        f::F; n::Int
+    end
+    (c::CR)(du, u, p, t) = (c.n += 1; c.f(du, u, p, t))
+    a = CR((du, u, p, t) -> (du .= -0.1 .* A * u), 0)
+    b = CR((du, u, p, t) -> (du .= -u .+ 0.01 / length(u) .* sum(abs2, u)), 0)
 
     fsplit = GenericSplitFunction((ODEFunction(a), ODEFunction(b)), (dofs, dofs))
-    alg    = StrangMarchuk((Euler(), Euler()))
-    integ  = init(OperatorSplittingProblem(fsplit, copy(u0), (0.0,1e6)), alg;
-                  dt=dt, adaptive=false, alias_u0=false, verbose=false)
-    a.n = 0; b.n = 0;
+    alg = StrangMarchuk((Euler(), Euler()))
+    integ = init(
+        OperatorSplittingProblem(fsplit, copy(u0), (0.0, 1.0e6)), alg;
+        dt = dt, adaptive = false, alias_u0 = false, verbose = false
+    )
+    a.n = 0; b.n = 0
     step!(integ)
-    @test a.n == 2*2 # 2 solves á 2 f calls
-    @test b.n == 1*2 # 1 solve  á 2 f calls
-    a.n = 0; b.n = 0;
+    @test a.n == 2 * 2 # 2 solves á 2 f calls
+    @test b.n == 1 * 2 # 1 solve  á 2 f calls
+    a.n = 0; b.n = 0
     step!(integ)
-    @test a.n == 1*1 + 1*2 # 2 solves, where the first call respects FSAL
-    @test b.n == 1*2 # 1 solve  á 2 f calls
+    @test a.n == 1 * 1 + 1 * 2 # 2 solves, where the first call respects FSAL
+    @test b.n == 1 * 2 # 1 solve  á 2 f calls
 end
