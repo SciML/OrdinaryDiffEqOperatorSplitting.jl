@@ -33,7 +33,7 @@ end
     a = CR((du, u, p, t) -> (du .= -0.1 .* u), 0)
     b = CR((du, u, p, t) -> (du .= -u .+ 0.01 / length(u) .* sum(abs2, u)), 0)
 
-    N, dt = 100_000, 1e-3
+    N, dt = 100_000, 1.0e-3
     u0 = ones(N); dofs = collect(1:N)
     fsplit = GenericSplitFunction((ODEFunction(a), ODEFunction(b)), (dofs, dofs))
     alg = StrangMarchuk((Euler(), Euler()))
