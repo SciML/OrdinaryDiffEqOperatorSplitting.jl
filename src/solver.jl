@@ -53,7 +53,7 @@ end
             return
         end
 
-        backward_sync_subintegrator!(parent, child, idxs, sync)
+        @timeit_debug "sync <-" backward_sync_subintegrator!(parent, child, idxs, sync)
     end
 end
 
@@ -116,7 +116,7 @@ end
             return
         end
 
-        backward_sync_subintegrator!(parent, child, idxs, sync)
+        @timeit_debug "sync <-" backward_sync_subintegrator!(parent, child, idxs, sync)
     end
 end
 
@@ -137,7 +137,7 @@ end
             return
         end
 
-        backward_sync_subintegrator!(parent, child, idxs, sync)
+        @timeit_debug "sync <-" backward_sync_subintegrator!(parent, child, idxs, sync)
     end
 end
 
@@ -148,6 +148,9 @@ function _perform_step!(
         dt
     )
     half_dt = dt / 2
+
+    # Skip sync of for first solve, because it is already in sync
+    mark_next_sync_continuous(parent)
 
     _sm_forward_pass!(parent, children, half_dt, dt)
     parent.force_stepfail && return

@@ -64,16 +64,23 @@ function forward_sync_subintegrator!(
         solution_indices,
         sync
     )
+    # Skip if we are calling the same subintegrator twice in a row (as in e.g. palindromic methods)
+    if is_next_sync_continuous(parent)
+        reset_next_sync_continuous(parent)
+        return nothing
+    end
     forward_sync_internal!(parent.u, child, solution_indices)
-    forward_sync_external!(parent, child, sync)
+    @timeit_debug "external sync" forward_sync_external!(parent, child, sync)
     return nothing
 end
 
 # Shared internal helper: copy master u slice → leaf DEIntegrator u/uprev
 function forward_sync_internal!(u_source, child::DEIntegrator, solution_indices)
     @views usrc = u_source[solution_indices]
-    sync_vectors!(child.u, usrc)
-    sync_vectors!(child.uprev, child.u)
+    @timeit_debug "sync vectors" begin
+        sync_vectors!(child.u, usrc)
+        sync_vectors!(child.uprev, child.u)
+    end
     # SciMLBase v3 renamed this to `derivative_discontinuity!`; call the
     # appropriate name based on which SciMLBase is loaded.
     @static if isdefined(SciMLBase, :derivative_discontinuity!)
@@ -100,9 +107,16 @@ function backward_sync_subintegrator!(
         solution_indices,
         sync
     )
-    @views udst = parent.u[solution_indices]
-    sync_vectors!(udst, child.u)
-    backward_sync_external!(parent, child, sync)
+    backward_sync_internal!(parent.u, child, solution_indices)
+    @timeit_debug "external sync" backward_sync_external!(parent, child, sync)
+    return nothing
+end
+
+function backward_sync_internal!(u_dest, child::DEIntegrator, solution_indices)
+    @views udst = u_dest[solution_indices]
+    @timeit_debug "sync vectors" begin
+        sync_vectors!(udst, child.u)
+    end
     return nothing
 end
 

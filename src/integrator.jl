@@ -176,7 +176,15 @@ mutable struct OperatorSplittingIntegrator{
     opts::optionsType
     stats::IntegratorStats
     tdir::tType
+    next_sync_is_continuous::Bool
 end
+
+is_next_sync_continuous(integrator) = false
+is_next_sync_continuous(integrator::OperatorSplittingIntegrator) = integrator.next_sync_is_continuous
+mark_next_sync_continuous(integrator) = nothing
+mark_next_sync_continuous(integrator::OperatorSplittingIntegrator) = integrator.next_sync_is_continuous = true
+reset_next_sync_continuous(integrator) = nothing
+reset_next_sync_continuous(integrator::OperatorSplittingIntegrator) = integrator.next_sync_is_continuous = false
 
 const AnySplitIntegrator = Union{SplitSubIntegrator, OperatorSplittingIntegrator}
 
@@ -276,7 +284,8 @@ function SciMLBase.__init(
         controller,
         IntegratorOptions(; verbose, adaptive),
         IntegratorStats(),
-        tType(tstops_internal.ordering isa DataStructures.FasterForward ? 1 : -1)
+        tType(tstops_internal.ordering isa DataStructures.FasterForward ? 1 : -1),
+        false,
     )
     DiffEqBase.initialize!(callback, u0, t0, integrator)
     return integrator
@@ -365,7 +374,8 @@ function _subreinit_child!(
         # Reinit does not touch this, so we reset it manually.
         set_dt!(child, dt)
     end
-    return DiffEqBase.reinit!(child; kwargs...)
+    DiffEqBase.reinit!(child; kwargs...)
+    return nothing
 end
 
 # Reinitialise an intermediate SplitSubIntegrator child
