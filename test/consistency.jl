@@ -1,6 +1,7 @@
 using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqOperatorSplitting
 using Test
+using SciMLIterators: TimeChoiceIterator
 
 @testset "Baseline consistency" begin
 

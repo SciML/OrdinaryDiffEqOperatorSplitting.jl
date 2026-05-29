@@ -7,6 +7,7 @@ import DiffEqBase: DiffEqBase, ODEFunction, ODEProblem
 using OrdinaryDiffEqLowOrderRK
 using OrdinaryDiffEqTsit5
 using ModelingToolkit
+using SciMLIterators: TimeChoiceIterator, intervals
 
 # ---------------------------------------------------------------------------
 # Reference problem
@@ -54,17 +55,12 @@ f3 = ODEFunction(ode3)
 
 @independent_variables time
 Dt = Differential(time)
-@mtkmodel TestModelODE2 begin
-    @variables begin
-        u1(time)
-        u2(time)
-    end
-    @equations begin
-        Dt(u1) ~ -0.01u2
-        Dt(u2) ~ -0.01u1
-    end
-end
-@named testmodel2 = TestModelODE2()
+@variables u1(time) u2(time)
+eqs = [
+    Dt(u1) ~ -0.01u2,
+    Dt(u2) ~ -0.01u1,
+]
+@named testmodel2 = System(eqs, time)
 testsys2 = mtkcompile(testmodel2; sort_eqs = false)
 
 # Test whether adaptive code path works in principle
@@ -209,7 +205,7 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
+            for (u, t) in TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
@@ -218,7 +214,7 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
+            for (uprev, tprev, u, t) in intervals(integrator)
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
@@ -262,7 +258,7 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
             @test integrator.dt == dt
             @test integrator.dt == integrator.dtcache
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            for (u, t) in DiffEqBase.TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
+            for (u, t) in TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
@@ -271,7 +267,7 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            for (uprev, tprev, u, t) in DiffEqBase.intervals(integrator)
+            for (uprev, tprev, u, t) in intervals(integrator)
             end
             @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
             @test integrator.t ≈ tspan[2]
