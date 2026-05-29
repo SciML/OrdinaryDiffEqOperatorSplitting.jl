@@ -18,9 +18,11 @@ import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isdtchangeable,
 # integrators is no longer supported. Convert Bool → DEVerbosity when available.
 @static if isdefined(DiffEqBase, :DEVerbosity)
     _inner_verbose(verbose::Bool) = verbose ? DiffEqBase.DEFAULT_VERBOSE : DiffEqBase.DEVerbosity(DiffEqBase.None())
+    const DEFAULT_VERBOSITY = DiffEqBase.DEFAULT_VERBOSE
 else
-    _inner_verbose(verbose::Bool) = verbose
+    const DEFAULT_VERBOSITY = false
 end
+_inner_verbose(verbose) = verbose
 
 abstract type AbstractOperatorSplitFunction <: SciMLBase.AbstractODEFunction{true} end
 abstract type AbstractOperatorSplittingAlgorithm end

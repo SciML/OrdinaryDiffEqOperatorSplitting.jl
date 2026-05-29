@@ -6,12 +6,12 @@ end
 
 IntegratorStats() = IntegratorStats(0, 0)
 
-Base.@kwdef mutable struct IntegratorOptions{tType, fType, F3}
+Base.@kwdef mutable struct IntegratorOptions{tType, fType, vbType, F3}
     adaptive::Bool
     dtmin::tType = eps(Float64)
     dtmax::tType = Inf
     failfactor::fType = 4.0
-    verbose::Bool = false
+    verbose::vbType = DEFAULT_VERBOSITY
     isoutofdomain::F3 = DiffEqBase.ODE_DEFAULT_ISOUTOFDOMAIN
 end
 
@@ -165,6 +165,7 @@ mutable struct OperatorSplittingIntegrator{
     force_stepfail::Bool
     isout::Bool
     u_modified::Bool
+    just_hit_tstop::Bool
     cache::cacheType
     sol::solType
     # Tuple of SplitSubIntegrator nodes (one per top-level operator).
@@ -268,14 +269,14 @@ function SciMLBase.__init(
         alg,
         u, uprev, tmp,
         p,
-        t0, copy(dt),
+        t0, t0,
         dt, dtcache,
         dtchangeable,
         tstops_internal, tstops,
         saveat_internal, saveat,
         callback,
         advance_to_tstop,
-        false, false, false, false,
+        false, false, false, false, false,
         cache, sol,
         child_subintegrators,
         child_solution_indices,
@@ -314,6 +315,7 @@ function DiffEqBase.reinit!(
     integrator.tprev = t0
     if dt !== nothing
         integrator.dt = dt
+        integrator.dtcache = dt
     end
     integrator.tstops, integrator.saveat =
         tstops_and_saveat_heaps(t0, tf, tstops, saveat)
@@ -441,7 +443,11 @@ function OrdinaryDiffEqCore.handle_tstop!(integrator::AnySplitIntegrator)
     return nothing
 end
 
-notify_integrator_hit_tstop!(integrator::AnySplitIntegrator) = nothing
+notify_integrator_hit_tstop!(integrator::SplitSubIntegrator) = nothing
+function notify_integrator_hit_tstop!(integrator::OperatorSplittingIntegrator)
+    integrator.just_hit_tstop = true
+    return nothing
+end
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +563,7 @@ increment_iteration(integrator::AnySplitIntegrator) = integrator.iter += 1
 
 function footer_reset_flags!(integrator)
     integrator.u_modified = false
+    integrator.just_hit_tstop = false
     return
 end
 footer_reset_flags!(::SplitSubIntegrator) = nothing
@@ -1063,10 +1070,16 @@ function _build_child(
         controller = nothing
     ) where {S, T, P, F}
     u = uouter[solution_indices]
-    prob2 = if p isa NullParameters
-        SciMLBase.ODEProblem(f, u, (t0, tf))
+    u0 = if f isa SciMLBase.AbstractSciMLFunction
+        u
     else
-        SciMLBase.ODEProblem(f, u, (t0, tf), p)
+        SciMLBase.variable_symbols(f) .=> u
+    end
+    # MTK v11 compiled systems require a symbolic map for u0; plain SciMLFunctions accept arrays.
+    prob2 = if p isa NullParameters
+        SciMLBase.ODEProblem(f, u0, (t0, tf))
+    else
+        SciMLBase.ODEProblem(f, u0, (t0, tf), p)
     end
 
     integrator = SciMLBase.__init(
@@ -1115,12 +1128,11 @@ function DiffEqBase.add_saveat!(i::OperatorSplittingIntegrator, t)
     return nothing
 end
 
-DiffEqBase.u_modified!(i::OperatorSplittingIntegrator, bool) = i.u_modified = bool
-DiffEqBase.u_modified!(i::SplitSubIntegrator, bool) = i.u_modified = bool
-
-# SciMLBase v3 renamed `u_modified!` → `derivative_discontinuity!`. On v3+,
-# also provide the overloads under the new name so callers using the new
-# API dispatch correctly instead of hitting the generic `error(...)` fallback.
+# SciMLBase v3 renamed `u_modified!` → `derivative_discontinuity!`.
+@static if isdefined(DiffEqBase, :u_modified!)
+    DiffEqBase.u_modified!(i::OperatorSplittingIntegrator, bool) = i.u_modified = bool
+    DiffEqBase.u_modified!(i::SplitSubIntegrator, bool) = i.u_modified = bool
+end
 @static if isdefined(SciMLBase, :derivative_discontinuity!)
     SciMLBase.derivative_discontinuity!(i::OperatorSplittingIntegrator, bool) = i.u_modified = bool
     SciMLBase.derivative_discontinuity!(i::SplitSubIntegrator, bool) = i.u_modified = bool
