@@ -1,0 +1,5 @@
+[default.extend-words]
+# Gilbert Strang — Strang splitting / Strang–Marchuk operator splitting
+Strang = "Strang"
+# Citation key for Trotter (Tro:1959:psg) used in docstrings
+Tro = "Tro"
