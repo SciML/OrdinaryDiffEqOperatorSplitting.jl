@@ -1,22 +1,19 @@
-name: format-check
+name: "Format Check"
 
 on:
   push:
     branches:
-      - 'master'
       - 'main'
       - 'release-'
     tags: '*'
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
 jobs:
   runic:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: julia-actions/setup-julia@v3
-        with:
-          version: '1'
-      - uses: fredrikekre/runic-action@v1
-        with:
-          version: '1'
+    name: "Runic Format Check"
+    uses: "SciML/.github/.github/workflows/runic.yml@v1"
+    secrets: "inherit"
