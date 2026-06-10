@@ -11,5 +11,10 @@ if GROUP == "All" || GROUP == "Core"
 end
 
 if GROUP == "QA"
-    @safetestset "Quality Assurance" include("qa/qa.jl")
+    using Pkg
+    Pkg.activate(joinpath(@__DIR__, "qa"))
+    Pkg.instantiate()
+    @testset "Quality Assurance" begin
+        include("qa/qa.jl")
+    end
 end
