@@ -1,13 +1,16 @@
-using OrdinaryDiffEqOperatorSplitting
-using Aqua
-using JET
-using Test
+using SafeTestsets
 
-@testset "Aqua" begin
+@safetestset "Aqua" begin
+    using OrdinaryDiffEqOperatorSplitting
+    using Aqua
+    using Test
     Aqua.test_all(OrdinaryDiffEqOperatorSplitting)
 end
 
-@testset "JET" begin
+@safetestset "JET" begin
+    using OrdinaryDiffEqOperatorSplitting
+    using JET
+    using Test
     # JET.test_package reports 2 possible errors in src/integrator.jl
     # (rollback_children!/_rollback_children! on the SplitSubIntegrator path).
     # Tracked in https://github.com/SciML/OrdinaryDiffEqOperatorSplitting.jl/issues/87
