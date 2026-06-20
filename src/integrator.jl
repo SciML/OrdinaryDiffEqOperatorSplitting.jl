@@ -932,7 +932,7 @@ function advance_solution_by!(
     return nothing
 end
 
-# Leaf disptach
+# Leaf dispatch
 function advance_solution_by!(outer::AnySplitIntegrator, child::DEIntegrator, dt)
     SciMLBase.step!(child, dt, true)
     return nothing
