@@ -19,24 +19,22 @@ Unrolled = "9602ed7d-8fef-5bc8-8597-8f21381861e8"
 BinaryHeaps = "1.0.0"
 CommonSolve = "0.2.4"
 DiffEqBase = "6.165.1, 7"
-ExplicitImports = "1"
 ModelingToolkit = "11"
 OrdinaryDiffEqCore = "4.4"
 OrdinaryDiffEqLowOrderRK = "1.7, 2"
 OrdinaryDiffEqTsit5 = "1.1.0, 2"
-PrecompileTools = "1.0"
+PrecompileTools = "1.1"
 RecursiveArrayTools = "3.39.0, 4"
 SafeTestsets = "0.1.0"
 SciMLBase = "2.77.0, 3.1"
 SciMLIterators = "1"
-SciMLTesting = "1"
+SciMLTesting = "1.6"
 Test = "1"
 TimerOutputs = "0.5.28"
 Unrolled = "0.1.5"
 julia = "1.10"
 
 [extras]
-ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
 OrdinaryDiffEqTsit5 = "b1df2697-797e-41e3-8120-5422d3b24e4a"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
@@ -45,4 +43,4 @@ SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["ExplicitImports", "ModelingToolkit", "OrdinaryDiffEqTsit5", "SafeTestsets", "SciMLIterators", "SciMLTesting", "Test"]
+test = ["ModelingToolkit", "OrdinaryDiffEqTsit5", "SafeTestsets", "SciMLIterators", "SciMLTesting", "Test"]
