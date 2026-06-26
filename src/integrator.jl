@@ -285,7 +285,7 @@ function SciMLBase.__init(
         controller,
         IntegratorOptions(; verbose, adaptive),
         IntegratorStats(),
-        tType(tstops_internal.ordering isa DataStructures.FasterForward ? 1 : -1),
+        tType(tstops_internal.ordering isa BinaryHeaps.FasterForward ? 1 : -1),
         false,
     )
     DiffEqBase.initialize!(callback, u0, t0, integrator)
@@ -826,7 +826,7 @@ end
 
 # Time helpers
 tdir(integrator) =
-    integrator.tstops.ordering isa DataStructures.FasterForward ? 1 : -1
+    integrator.tstops.ordering isa BinaryHeaps.FasterForward ? 1 : -1
 is_past_t(integrator, t) =
     tdir(integrator) * (t - integrator.t) ≤ zero(integrator.t)
 function reached_tstop(integrator, tstop, stop_at_tstop = integrator.dtchangeable)
