@@ -25,27 +25,27 @@ run_qa(
                 :variable_symbols,   # owner SymbolicIndexingInterface, via SciMLBase
             ),
         ),
-        # Non-public names of upstream deps (SciMLBase / DiffEqBase /
-        # OrdinaryDiffEqCore / DataStructures) used to extend/drive the integrator
-        # interface. These become public as the base libraries declare them.
+        # Names still non-public in the registered releases (SciMLBase 3.27.0,
+        # DiffEqBase 7.6.0, OrdinaryDiffEqCore 4.4.0), used to extend/drive the
+        # integrator interface. Verified against those releases via Base.ispublic;
+        # the SciMLBase make-public round promoted AbstractDiffEqFunction /
+        # AbstractODEFunction / AbstractSciMLFunction / AbstractODEAlgorithm /
+        # AbstractODEProblem / build_solution / check_error! / isadaptive (now
+        # dropped), DiffEqBase 7.6 made ODE_DEFAULT_ISOUTOFDOMAIN public (dropped),
+        # and the heap ordering names moved to BinaryHeaps (public, dropped).
         all_qualified_accesses_are_public = (;
             ignore = (
-                :AbstractDiffEqFunction, :AbstractODEAlgorithm, :AbstractODEFunction,   # SciMLBase
-                :AbstractODEIntegrator, :AbstractODEProblem, :AbstractSciMLFunction,    # SciMLBase
-                :__init, :__solve, :build_solution, :check_error!, :done, :has_reinit,  # SciMLBase
-                :has_stats, :isadaptive, :postamble!, :solution_new_retcode,            # SciMLBase
-                :variable_symbols,                                                      # SciMLBase
-                :DEFAULT_VERBOSE, :DEIntegrator, :NAN_CHECK, :None,                     # DiffEqBase
-                :ODE_DEFAULT_ISOUTOFDOMAIN,                                             # DiffEqBase
-                :fix_dt_at_bounds!, :handle_tstop!, :increment_accept!,                 # OrdinaryDiffEqCore
-                :increment_reject!, :initialize_d_discontinuities, :initialize_saveat,  # OrdinaryDiffEqCore
-                :initialize_tstops, :post_newton_controller!, :timedepentdtmin,         # OrdinaryDiffEqCore
-                :FasterForward, :FasterReverse,                                         # DataStructures
+                :AbstractODEIntegrator, :__init, :__solve, :done, :has_reinit,           # SciMLBase
+                :has_stats, :postamble!, :solution_new_retcode, :variable_symbols,       # SciMLBase
+                :DEFAULT_VERBOSE, :NAN_CHECK, :None,                                      # DiffEqBase
+                :fix_dt_at_bounds!, :handle_tstop!, :increment_accept!,                  # OrdinaryDiffEqCore
+                :increment_reject!, :initialize_d_discontinuities, :initialize_saveat,   # OrdinaryDiffEqCore
+                :initialize_tstops, :post_newton_controller!, :timedepentdtmin,          # OrdinaryDiffEqCore
             ),
         ),
         all_explicit_imports_are_public = (;
             ignore = (
-                :DEIntegrator, :NullParameters, :isadaptive,                            # SciMLBase
+                :DEIntegrator,                                                          # SciMLBase
                 :isdtchangeable, :step_accept_controller!, :step_reject_controller!,    # OrdinaryDiffEqCore
                 :stepsize_controller!,                                                  # OrdinaryDiffEqCore
             ),

@@ -1106,7 +1106,7 @@ SciMLBase.first_tstop(i::AnySplitIntegrator) = first(i.tstops)
 SciMLBase.pop_tstop!(i::AnySplitIntegrator) = pop!(i.tstops)
 
 DiffEqBase.get_dt(i::AnySplitIntegrator) = i.dt
-function set_dt!(i::DiffEqBase.DEIntegrator, dt)
+function set_dt!(i::DEIntegrator, dt)
     dt <= zero(dt) && error("dt must be positive")
     return i.dt = dt
 end

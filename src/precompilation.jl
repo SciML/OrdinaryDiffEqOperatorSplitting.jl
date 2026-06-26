@@ -23,9 +23,9 @@ end
     tspan = (0.0, 0.1)
     u0 = [1.0, 1.0, 1.0]
 
-    f1 = DiffEqBase.ODEFunction(_precompile_ode1)
-    f2 = DiffEqBase.ODEFunction(_precompile_ode2)
-    f3 = DiffEqBase.ODEFunction(_precompile_ode3)
+    f1 = SciMLBase.ODEFunction(_precompile_ode1)
+    f2 = SciMLBase.ODEFunction(_precompile_ode2)
+    f3 = SciMLBase.ODEFunction(_precompile_ode3)
 
     f1dofs = [1, 2, 3]
     f2dofs = [1, 3]
