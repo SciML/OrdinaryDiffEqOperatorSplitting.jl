@@ -1,11 +1,11 @@
 # helper function for setting up min/max heaps for tstops and saveat
 function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     FT = typeof(tf)
-    ordering = tf > t0 ? DataStructures.FasterForward : DataStructures.FasterReverse
+    ordering = tf > t0 ? BinaryHeaps.FasterForward : BinaryHeaps.FasterReverse
 
     # ensure that tstops includes tf and only has values ahead of t0
     tstops = [filter(t -> t0 < t < tf || tf < t < t0, tstops)..., tf]
-    tstops = DataStructures.BinaryHeap{FT, ordering}(tstops)
+    tstops = BinaryHeaps.BinaryHeap{FT, ordering}(tstops)
 
     if isnothing(saveat)
         saveat = [t0, tf]
@@ -18,7 +18,7 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
         # callback will ignore any times that are not between t0 and tf.
         saveat = collect(saveat)
     end
-    saveat = DataStructures.BinaryHeap{FT, ordering}(saveat)
+    saveat = BinaryHeaps.BinaryHeap{FT, ordering}(saveat)
 
     return tstops, saveat
 end
