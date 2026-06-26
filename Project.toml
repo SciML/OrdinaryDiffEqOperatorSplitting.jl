@@ -4,8 +4,8 @@ version = "0.3.2"
 authors = ["Dennis Ogiermann <termi-official@users.noreply.github.com> and contributors"]
 
 [deps]
+BinaryHeaps = "b2a6c25c-c996-4615-94ab-6e519ffb8690"
 CommonSolve = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
-DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 DiffEqBase = "2b5f629d-d688-5b77-993f-72d75c75574e"
 OrdinaryDiffEqCore = "bbf590c4-e513-4bbe-9b18-05decba2e5d8"
 OrdinaryDiffEqLowOrderRK = "1344f307-1e59-4825-a18e-ace9aa3fa4c6"
@@ -16,8 +16,8 @@ TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 Unrolled = "9602ed7d-8fef-5bc8-8597-8f21381861e8"
 
 [compat]
+BinaryHeaps = "1.0.0"
 CommonSolve = "0.2.4"
-DataStructures = "0.18.22, 0.19"
 DiffEqBase = "6.165.1, 7"
 ExplicitImports = "1"
 ModelingToolkit = "11"

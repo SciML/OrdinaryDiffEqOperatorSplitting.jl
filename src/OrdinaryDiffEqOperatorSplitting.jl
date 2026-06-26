@@ -5,7 +5,9 @@ timeit_debug_enabled() = false
 
 import Unrolled: @unroll
 
-import SciMLBase, DiffEqBase, DataStructures
+import BinaryHeaps
+
+import SciMLBase, DiffEqBase
 import SciMLBase: ReturnCode
 import SciMLBase: DEIntegrator, NullParameters, isadaptive
 
