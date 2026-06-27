@@ -36,7 +36,7 @@ run_qa(
         all_qualified_accesses_are_public = (;
             ignore = (
                 :AbstractODEIntegrator, :__init, :__solve, :done, :has_reinit,           # SciMLBase
-                :has_stats, :postamble!, :solution_new_retcode, :variable_symbols,       # SciMLBase
+                :has_stats, :postamble!, :solution_new_retcode,                          # SciMLBase
                 :DEFAULT_VERBOSE, :NAN_CHECK, :None,                                      # DiffEqBase
                 :fix_dt_at_bounds!, :handle_tstop!, :increment_accept!,                  # OrdinaryDiffEqCore
                 :increment_reject!, :initialize_d_discontinuities, :initialize_saveat,   # OrdinaryDiffEqCore

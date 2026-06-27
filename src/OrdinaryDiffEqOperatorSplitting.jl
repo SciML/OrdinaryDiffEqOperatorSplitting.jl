@@ -10,6 +10,7 @@ import BinaryHeaps
 import SciMLBase, DiffEqBase
 import SciMLBase: ReturnCode
 import SciMLBase: DEIntegrator, NullParameters, isadaptive
+import SymbolicIndexingInterface: variable_symbols
 
 import RecursiveArrayTools
 

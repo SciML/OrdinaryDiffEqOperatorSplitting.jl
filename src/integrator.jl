@@ -1073,7 +1073,7 @@ function _build_child(
     u0 = if f isa SciMLBase.AbstractSciMLFunction
         u
     else
-        SciMLBase.variable_symbols(f) .=> u
+        variable_symbols(f) .=> u
     end
     # MTK v11 compiled systems require a symbolic map for u0; plain SciMLFunctions accept arrays.
     prob2 = if p isa NullParameters
