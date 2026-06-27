@@ -17,6 +17,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
+# The reusable workflow declares these permissions, but a called workflow can only
+# downscope from the caller's token, never elevate it. This repo's default token is
+# read-only, so the caller must grant write explicitly or every run startup-fails.
+permissions:
+  actions: write
+  contents: write
+  statuses: write
+
 jobs:
   documentation:
     name: "Documentation"
