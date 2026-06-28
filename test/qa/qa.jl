@@ -19,10 +19,8 @@ run_qa(
         # re-exporting dep rather than the owning package.
         all_qualified_accesses_via_owners = (;
             ignore = (
-                :DEIntegrator,       # owner SciMLBase, via DiffEqBase
                 :None,               # owner SciMLLogging, via DiffEqBase
                 :timedepentdtmin,    # owner DiffEqBase, via OrdinaryDiffEqCore
-                :variable_symbols,   # owner SymbolicIndexingInterface, via SciMLBase
             ),
         ),
         # Names still non-public in the registered releases (SciMLBase 3.28.1,
