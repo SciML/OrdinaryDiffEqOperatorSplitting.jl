@@ -25,18 +25,19 @@ run_qa(
                 :variable_symbols,   # owner SymbolicIndexingInterface, via SciMLBase
             ),
         ),
-        # Names still non-public in the registered releases (SciMLBase 3.27.0,
-        # DiffEqBase 7.6.0, OrdinaryDiffEqCore 4.4.0), used to extend/drive the
-        # integrator interface. Verified against those releases via Base.ispublic;
-        # the SciMLBase make-public round promoted AbstractDiffEqFunction /
-        # AbstractODEFunction / AbstractSciMLFunction / AbstractODEAlgorithm /
-        # AbstractODEProblem / build_solution / check_error! / isadaptive (now
-        # dropped), DiffEqBase 7.6 made ODE_DEFAULT_ISOUTOFDOMAIN public (dropped),
-        # and the heap ordering names moved to BinaryHeaps (public, dropped).
+        # Names still non-public in the registered releases (SciMLBase 3.28.1,
+        # DiffEqBase 7.6.0, OrdinaryDiffEqCore 4.5.0), used to extend/drive the
+        # integrator interface. Verified against those releases via Base.ispublic.
+        # The SciMLBase make-public rounds promoted (now dropped from these lists):
+        # AbstractDiffEqFunction / AbstractODEFunction / AbstractSciMLFunction /
+        # AbstractODEAlgorithm / AbstractODEProblem / build_solution / check_error! /
+        # isadaptive / AbstractODEIntegrator / DEIntegrator / has_reinit / has_stats;
+        # DiffEqBase 7.6 made ODE_DEFAULT_ISOUTOFDOMAIN public; OrdinaryDiffEqCore
+        # made stepsize_controller! / step_accept_controller! / step_reject_controller!
+        # public; and the heap ordering names moved to BinaryHeaps (public, dropped).
         all_qualified_accesses_are_public = (;
             ignore = (
-                :AbstractODEIntegrator, :__init, :__solve, :done, :has_reinit,           # SciMLBase
-                :has_stats, :postamble!, :solution_new_retcode,                          # SciMLBase
+                :__init, :__solve, :done, :postamble!, :solution_new_retcode,           # SciMLBase
                 :DEFAULT_VERBOSE, :NAN_CHECK, :None,                                      # DiffEqBase
                 :fix_dt_at_bounds!, :handle_tstop!, :increment_accept!,                  # OrdinaryDiffEqCore
                 :increment_reject!, :initialize_d_discontinuities, :initialize_saveat,   # OrdinaryDiffEqCore
@@ -45,9 +46,7 @@ run_qa(
         ),
         all_explicit_imports_are_public = (;
             ignore = (
-                :DEIntegrator,                                                          # SciMLBase
-                :isdtchangeable, :step_accept_controller!, :step_reject_controller!,    # OrdinaryDiffEqCore
-                :stepsize_controller!,                                                  # OrdinaryDiffEqCore
+                :isdtchangeable,                                                        # OrdinaryDiffEqCore
             ),
         ),
     ),
