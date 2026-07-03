@@ -23,16 +23,6 @@ run_qa(
                 :timedepentdtmin,    # owner DiffEqBase, via OrdinaryDiffEqCore
             ),
         ),
-        # Names still non-public in the registered releases (SciMLBase 3.28.1,
-        # DiffEqBase 7.6.0, OrdinaryDiffEqCore 4.5.0), used to extend/drive the
-        # integrator interface. Verified against those releases via Base.ispublic.
-        # The SciMLBase make-public rounds promoted (now dropped from these lists):
-        # AbstractDiffEqFunction / AbstractODEFunction / AbstractSciMLFunction /
-        # AbstractODEAlgorithm / AbstractODEProblem / build_solution / check_error! /
-        # isadaptive / AbstractODEIntegrator / DEIntegrator / has_reinit / has_stats;
-        # DiffEqBase 7.6 made ODE_DEFAULT_ISOUTOFDOMAIN public; OrdinaryDiffEqCore
-        # made stepsize_controller! / step_accept_controller! / step_reject_controller!
-        # public; and the heap ordering names moved to BinaryHeaps (public, dropped).
         all_qualified_accesses_are_public = (;
             ignore = (
                 :__init, :__solve, :done, :postamble!, :solution_new_retcode,           # SciMLBase
