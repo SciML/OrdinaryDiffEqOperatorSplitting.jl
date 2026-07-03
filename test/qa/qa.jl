@@ -1,15 +1,41 @@
+using SciMLTesting
 using OrdinaryDiffEqOperatorSplitting
-using Aqua
 using JET
 using Test
 
-@testset "Aqua" begin
-    Aqua.test_all(OrdinaryDiffEqOperatorSplitting)
-end
-
-@testset "JET" begin
-    # JET.test_package reports 2 possible errors in src/integrator.jl
-    # (rollback_children!/_rollback_children! on the SplitSubIntegrator path).
+run_qa(
+    OrdinaryDiffEqOperatorSplitting;
+    explicit_imports = true,
+    # JET reports 2 genuine errors in src/integrator.jl on the SplitSubIntegrator
+    # rollback path: `rollback_children!(::SplitSubIntegrator)` has no matching
+    # method and `_rollback_children!` is called (line 514) but never defined.
     # Tracked in https://github.com/SciML/OrdinaryDiffEqOperatorSplitting.jl/issues/87
-    @test_broken false  # JET: rollback_children!(::SplitSubIntegrator) no matching method + _rollback_children! undefined (src/integrator.jl) — tracked in https://github.com/SciML/OrdinaryDiffEqOperatorSplitting.jl/issues/87
-end
+    # target_defined_modules scopes the report to this package's own modules (the
+    # default target_modules=(pkg,) filter hides these via-dependency-driven frames).
+    jet_broken = true,
+    jet_kwargs = (; target_defined_modules = true, mode = :basic),
+    ei_kwargs = (;
+        # Names re-exported through the SciML umbrella chain; accessed via a
+        # re-exporting dep rather than the owning package.
+        all_qualified_accesses_via_owners = (;
+            ignore = (
+                :None,               # owner SciMLLogging, via DiffEqBase
+                :timedepentdtmin,    # owner DiffEqBase, via OrdinaryDiffEqCore
+            ),
+        ),
+        all_qualified_accesses_are_public = (;
+            ignore = (
+                :__init, :__solve, :done, :postamble!, :solution_new_retcode,           # SciMLBase
+                :DEFAULT_VERBOSE, :NAN_CHECK, :None,                                      # DiffEqBase
+                :fix_dt_at_bounds!, :handle_tstop!, :increment_accept!,                  # OrdinaryDiffEqCore
+                :increment_reject!, :initialize_d_discontinuities, :initialize_saveat,   # OrdinaryDiffEqCore
+                :initialize_tstops, :post_newton_controller!, :timedepentdtmin,          # OrdinaryDiffEqCore
+            ),
+        ),
+        all_explicit_imports_are_public = (;
+            ignore = (
+                :isdtchangeable,                                                        # OrdinaryDiffEqCore
+            ),
+        ),
+    ),
+)
