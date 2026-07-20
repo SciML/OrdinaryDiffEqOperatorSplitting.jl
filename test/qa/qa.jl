@@ -5,7 +5,6 @@ using Test
 
 run_qa(
     OrdinaryDiffEqOperatorSplitting;
-    explicit_imports = true,
     # JET reports 2 genuine errors in src/integrator.jl on the SplitSubIntegrator
     # rollback path: `rollback_children!(::SplitSubIntegrator)` has no matching
     # method and `_rollback_children!` is called (line 514) but never defined.
@@ -38,5 +37,4 @@ run_qa(
             ),
         ),
     ),
-    api_docs_kwargs = (; rendered = true),
 )
