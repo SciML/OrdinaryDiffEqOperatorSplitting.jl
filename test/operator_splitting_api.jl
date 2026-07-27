@@ -1,4 +1,5 @@
 using OrdinaryDiffEqOperatorSplitting
+import OrdinaryDiffEqOperatorSplitting as OS
 using Test
 
 import SciMLBase: ReturnCode
@@ -70,6 +71,84 @@ _sub1_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
 _sub2_iter_factor(::LieTrotterGodunov) = 1
 _sub2_iter_factor(::StrangMarchuk) = 1
 _sub2_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
+
+# Mock solver extension exercising the documented developer extension interface v1:
+# an algorithm carrying `inner_algs`, a concrete cache, `init_cache`, and
+# `_perform_step!`. Sweeping the operators in reverse order is still a complete
+# first-order splitting. It does not give a different answer than
+# LieTrotterGodunov on the reference problem -- `trueA` is a multiple of the
+# identity, so the two operators commute and the sweep order cancels out.
+struct ReverseLieTrotterGodunov{AlgTupleType} <: OS.AbstractOperatorSplittingAlgorithm
+    inner_algs::AlgTupleType
+end
+
+struct ReverseLieTrotterGodunovCache{uType, uprevType} <: OS.AbstractOperatorSplittingCache
+    u::uType
+    uprev::uprevType
+end
+
+function OS.init_cache(
+        f::GenericSplitFunction, alg::ReverseLieTrotterGodunov;
+        uprev::AbstractArray, u::AbstractVector,
+    )
+    return ReverseLieTrotterGodunovCache(u, uprev)
+end
+
+function OS._perform_step!(
+        parent, children::Tuple, cache::ReverseLieTrotterGodunovCache, dt
+    )
+    for i in reverse(eachindex(children))
+        child = children[i]
+        idxs = parent.child_solution_indices[i]
+        sync = parent.child_synchronizers[i]
+
+        OS.forward_sync_subintegrator!(parent, child, idxs, sync)
+        OS.advance_solution_by!(parent, child, dt)
+        if OS._child_failed(child)
+            parent.force_stepfail = true
+            return nothing
+        end
+        OS.backward_sync_subintegrator!(parent, child, idxs, sync)
+    end
+    return nothing
+end
+
+@testset "solver extension interface v1" begin
+    split_f = GenericSplitFunction((f1, f2), ([1, 2, 3], [1, 3]))
+    prob = OperatorSplittingProblem(split_f, u0, tspan)
+    alg = ReverseLieTrotterGodunov((Euler(), Euler()))
+
+    integrator = DiffEqBase.init(prob, alg; dt = 0.01, verbose = false)
+    @test integrator.cache isa ReverseLieTrotterGodunovCache
+    DiffEqBase.solve!(integrator)
+    @test integrator.sol.retcode == ReturnCode.Success
+
+    function err(dt)
+        integ = DiffEqBase.init(prob, alg; dt = dt, verbose = false)
+        DiffEqBase.solve!(integ)
+        return maximum(abs, integ.u - trueu)
+    end
+    @test err(0.1) / err(0.01) ≈ 10 rtol = 0.1
+end
+
+@testset "nested rollback restores child buffers" begin
+    f1dofs = [1, 2, 3]
+    f2dofs = [1, 3]
+    f3dofs = [1, 2]
+    nested_f = GenericSplitFunction((f3, f3), (f3dofs, f3dofs))
+    split_f = GenericSplitFunction((f1, nested_f), (f1dofs, f2dofs))
+    prob = OperatorSplittingProblem(split_f, u0, (0.0, 1.0))
+    alg = LieTrotterGodunov((Euler(), LieTrotterGodunov((Euler(), Euler()))))
+    integrator = DiffEqBase.init(prob, alg; dt = 0.1, adaptive = false, verbose = false)
+
+    nested_child = integrator.child_subintegrators[2]
+    nested_child.u .= 0
+    nested_child.uprev .= 0
+    OS.rollback_children!(integrator)
+
+    @test nested_child.u == integrator.u[nested_child.solution_indices]
+    @test nested_child.uprev == nested_child.u
+end
 
 
 # ---------------------------------------------------------------------------

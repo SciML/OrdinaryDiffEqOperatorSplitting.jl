@@ -1,47 +1,24 @@
 using SciMLTesting
 using OrdinaryDiffEqOperatorSplitting
-using JET
-using Test
 
 run_qa(
     OrdinaryDiffEqOperatorSplitting;
-    # target_defined_modules scopes the report to this package's own modules (the
-    # default target_modules=(pkg,) filter hides via-dependency-driven frames).
-    jet_kwargs = (; target_defined_modules = true, mode = :basic),
     ei_kwargs = (;
-        # Names re-exported through the SciML umbrella chain; accessed via a
-        # re-exporting dep rather than the owning package.
-        all_qualified_accesses_via_owners = (;
-            ignore = (
-                :None,               # owner SciMLLogging, via DiffEqBase
-                :timedepentdtmin,    # owner DiffEqBase, via OrdinaryDiffEqCore
-            ),
-        ),
         all_qualified_accesses_are_public = (;
             ignore = (
-                :__init, :__solve, :done, :postamble!, :solution_new_retcode,           # SciMLBase
-                :DEFAULT_VERBOSE, :NAN_CHECK, :None, :ODE_DEFAULT_NORM,                  # DiffEqBase
-                :fix_dt_at_bounds!, :handle_tstop!, :increment_accept!,                  # OrdinaryDiffEqCore
-                :increment_reject!, :initialize_d_discontinuities, :initialize_saveat,   # OrdinaryDiffEqCore
-                :initialize_tstops, :timedepentdtmin, :IController,                      # OrdinaryDiffEqCore
-                # Controller-cache protocol names. Several are `public` only in newer
-                # OrdinaryDiffEqCore (e.g. post_newton_controller! from 4.7); keep them
-                # all ignored so QA stays valid across the whole [compat] range even
-                # though the pinned QA manifest resolves a newer version.
-                :setup_controller_cache, :reinit_controller!, :post_newton_controller!,  # OrdinaryDiffEqCore
-                :get_EEst, :set_EEst!, :get_current_adaptive_order,                      # OrdinaryDiffEqCore
-                :gamma_default, :failfactor_default, :AbstractControllerCache,           # OrdinaryDiffEqCore
-                :promote_tspan,                                                          # SciMLBase
-                # Broadcast extension points a TreeOption implements (src/config_tree.jl).
-                :Broadcasted, :broadcastable, :dotview, :materialize!,                   # Base
-            ),
-        ),
-        all_explicit_imports_are_public = (;
-            ignore = (
-                :isdtchangeable,                                                        # OrdinaryDiffEqCore
-                # Public only in newer OrdinaryDiffEqCore; see the note above.
-                :stepsize_controller!, :step_accept_controller!,                        # OrdinaryDiffEqCore
-                :step_reject_controller!, :accept_step_controller,                      # OrdinaryDiffEqCore
+                # Broadcast overloading has no public spelling: `Base.Broadcast` marks
+                # `dotview`, `broadcastable` and `BroadcastStyle` public but not
+                # `materialize!` or the `Broadcasted` type they dispatch on, and there
+                # is no alias for either. src/config_tree.jl needs both to give
+                # `opt[...] .= x` its subtree-fill meaning.
+                :Broadcasted, :materialize!,
+                # Public from OrdinaryDiffEqCore 4.13; the [compat] floor is 4.4 and
+                # 4.12 is the newest registered 4.x, so the check still resolves a
+                # version without them. Drop once the floor moves past the release.
+                :fix_dt_at_bounds!, :handle_tstop!,
+                # https://github.com/SciML/OrdinaryDiffEq.jl/pull/4111 makes this
+                # public alongside the rest of the per-algorithm controller defaults.
+                :failfactor_default,
             ),
         ),
     ),

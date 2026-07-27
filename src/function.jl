@@ -2,7 +2,18 @@
     GenericSplitFunction(functions::Tuple, solution_indices::Tuple)
     GenericSplitFunction(functions::Tuple, solution_indices::Tuple, synchronizers::Tuple)
 
-This type of function describes a set of connected inner functions in mass-matrix form, as usually found in operator splitting procedures.
+Construct an operator tree for an [`OperatorSplittingProblem`](@ref).
+
+`functions` contains ODE operators or nested `GenericSplitFunction`s.
+`solution_indices[i]` gives the entries of the parent solution used by
+`functions[i]`. The three-argument form accepts one synchronizer per operator;
+the two-argument form uses [`NoExternalSynchronization`](@ref) for every
+operator.
+
+# Arguments
+- `functions`: Tuple of ODE operators or nested split functions.
+- `solution_indices`: Tuple of parent-solution index collections.
+- `synchronizers`: Tuple of synchronization objects, one for each operator.
 """
 struct GenericSplitFunction{fSetType <: Tuple, idxSetType <: Tuple, sSetType <: Tuple} <:
     AbstractOperatorSplitFunction
@@ -36,7 +47,13 @@ num_operators(f::GenericSplitFunction) = length(f.functions)
 """
     NoExternalSynchronization()
 
-Indicator that no synchronization between parameters and solution vectors is necessary.
+Marker indicating that a split operator requires no external parameter
+synchronization.
+
+## Extension interface v1
+
+This marker is for synchronizer implementations. It is not an end-user API and
+may change in a breaking release of this package.
 """
 struct NoExternalSynchronization end
 

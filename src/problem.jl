@@ -1,5 +1,19 @@
 """
     OperatorSplittingProblem(f::AbstractOperatorSplitFunction, u0, tspan, p::Tuple)
+
+Define an ODE problem whose right-hand side is an operator tree. Use it with
+[`LieTrotterGodunov`](@ref) or [`StrangMarchuk`](@ref) through the SciML
+`init`/`solve` interface.
+
+# Arguments
+- `f`: [`GenericSplitFunction`](@ref) describing the operator tree.
+- `u0`: Initial state of the full system.
+- `tspan`: Integration interval.
+- `p`: Optional tuple of operator parameters. Null parameters are created when
+  it is omitted.
+
+# Keywords
+Additional keywords are stored with the problem and forwarded by the solver.
 """
 mutable struct OperatorSplittingProblem{
         fType <: AbstractOperatorSplitFunction, uType, tType, pType <: Tuple, K,

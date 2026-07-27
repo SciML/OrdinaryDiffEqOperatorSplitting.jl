@@ -2,10 +2,14 @@
 # Lie-Trotter-Godunov operator splitting
 # ---------------------------------------------------------------------------
 """
-    LieTrotterGodunov <: AbstractOperatorSplittingAlgorithm
+    LieTrotterGodunov(inner_algs)
 
-First-order sequential operator splitting algorithm attributed to
-[Lie:1880:tti,Tro:1959:psg,God:1959:dmn](@cite).
+Construct a first-order sequential operator-splitting algorithm attributed to
+[Lie:1880:tti,Tro:1959:psg,God:1959:dmn](@cite). Each step advances the
+operators in tuple order.
+
+# Arguments
+- `inner_algs`: Tuple containing one SciML algorithm for each leaf operator.
 """
 struct LieTrotterGodunov{AlgTupleType} <: AbstractOperatorSplittingAlgorithm
     inner_algs::AlgTupleType # Tuple of timesteppers for inner problems
@@ -61,7 +65,7 @@ end
 # Strang-Marchuk operator splitting
 # ---------------------------------------------------------------------------
 """
-    StrangMarchuk <: AbstractOperatorSplittingAlgorithm
+    StrangMarchuk(inner_algs)
 
 Second-order symmetric (palindromic) operator splitting algorithm attributed to
 [Str:1968:ccd,Mar:1971:tsm](@cite).
@@ -71,6 +75,9 @@ For ``N`` operators the scheme performs
 ``A_1(\\Delta t/2) \\to \\cdots \\to A_{N-1}(\\Delta t/2) \\to A_N(\\Delta t) \\to A_{N-1}(\\Delta t/2) \\to \\cdots \\to A_1(\\Delta t/2)``
 
 achieving second-order accuracy through symmetry.
+
+# Arguments
+- `inner_algs`: Tuple containing one SciML algorithm for each leaf operator.
 """
 struct StrangMarchuk{AlgTupleType} <: AbstractOperatorSplittingAlgorithm
     inner_algs::AlgTupleType # Tuple of timesteppers for inner problems

@@ -24,11 +24,15 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
 end
 
 """
-    need_sync(a, b)
+    need_sync(a::AbstractVector, b::AbstractVector)
 
-Determines whether it is necessary to synchronize two objects with any
-solution information. A possible reason when no synchronization is necessary
-might be that the vectors alias each other in memory.
+Determine whether two solution buffers require synchronization.
+
+## Extension interface v1
+
+Synchronizer implementations may specialize this function for their storage
+types. It is a developer extension interface, not an end-user API, and may
+change in a breaking release of this package.
 """
 need_sync
 
@@ -40,7 +44,12 @@ need_sync(a::SubArray, b::SubArray) = a.parent !== b.parent
 """
     sync_vectors!(a, b)
 
-Copies the information in `b` into `a` if synchronization is necessary.
+Copy `b` into `a` when [`need_sync`](@ref) reports distinct storage.
+
+## Extension interface v1
+
+This is a developer extension interface, not an end-user API. It may change in
+a breaking release of this package.
 """
 function sync_vectors!(a, b)
     if need_sync(a, b) && a !== b
@@ -50,14 +59,17 @@ function sync_vectors!(a, b)
 end
 
 """
-    forward_sync_subintegrator!(parent_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+    forward_sync_subintegrator!(parent::AnySplitIntegrator, child::DEIntegrator, solution_indices, synchronizer)
 
-This function is responsible of copying the solution and parameters of the parent integrator and the synchronized subintegrators with the information given into the inner integrator.
-If the inner integrator is synchronized with other inner integrators using `sync`, the function `forward_sync_external!` shall be dispatched for `sync`.
-The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
-The `solution_indices` are indices into the parent integrators solution vectors.
+Synchronize a child integrator from its parent before a substep.
+
+Custom synchronizers should define `forward_sync_external!` for their type.
+
+## Extension interface v1
+
+This is a developer extension interface, not an end-user API. It may change in
+a breaking release of this package.
 """
-
 function forward_sync_subintegrator!(
         parent::AnySplitIntegrator,
         child::DEIntegrator,
@@ -106,14 +118,17 @@ end
 
 
 """
-    backward_sync_subintegrator!(parent_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+    backward_sync_subintegrator!(parent::AnySplitIntegrator, child::DEIntegrator, solution_indices, synchronizer)
 
-This function is responsible of copying the solution of the inner integrator back into parent integrator and the synchronized subintegrators.
-If the inner integrator is synchronized with other inner integrators using `sync`, the function `backward_sync_external!` shall be dispatched for `sync`.
-The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
-The `solution_indices` are indices in the parent integrators solution vectors.
+Synchronize a child integrator back into its parent after a substep.
+
+Custom synchronizers should define `backward_sync_external!` for their type.
+
+## Extension interface v1
+
+This is a developer extension interface, not an end-user API. It may change in
+a breaking release of this package.
 """
-
 function backward_sync_subintegrator!(
         parent::AnySplitIntegrator,
         child::DEIntegrator,
@@ -178,7 +193,7 @@ function OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator::AnySplitIntegrator)
     # dtmin/dtmax are magnitudes; clamp |dt| and restore the direction. dtmin wins
     # over dtmax if the two conflict.
     dtmax = abs(integrator.opts.dtmax)
-    dtmin = abs(OrdinaryDiffEqCore.timedepentdtmin(integrator))
+    dtmin = abs(DiffEqBase.timedepentdtmin(integrator))
     integrator.dt = tdir(integrator) * max(min(abs(integrator.dt), dtmax), dtmin)
     return nothing
 end

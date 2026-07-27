@@ -789,7 +789,7 @@ function step_footer!(integrator::AnySplitIntegrator)
 end
 
 function abort_below_dtmin!(integrator::AnySplitIntegrator)
-    abs(integrator.dt) > abs(OrdinaryDiffEqCore.timedepentdtmin(integrator)) && return nothing
+    abs(integrator.dt) > abs(DiffEqBase.timedepentdtmin(integrator)) && return nothing
     _is_verbose(integrator.opts.verbose) &&
         @warn("dt <= dtmin. Aborting. There is either an error in your model specification or the true solution is unstable.")
     _set_retcode!(integrator, ReturnCode.DtLessThanMin)
@@ -901,7 +901,7 @@ function SciMLBase.check_error(integrator::OperatorSplittingIntegrator)
             integrator.sol.retcode != ReturnCode.Default
         return integrator.sol.retcode
     end
-    if DiffEqBase.NAN_CHECK(integrator.dtcache) || DiffEqBase.NAN_CHECK(integrator.dt)
+    if isnan(integrator.dtcache) || isnan(integrator.dt)
         _is_verbose(integrator.opts.verbose) &&
             @warn("NaN dt detected. Likely a NaN value in the state, parameters, or derivative value caused this outcome.")
         return ReturnCode.DtNaN
@@ -914,7 +914,7 @@ function SciMLBase.check_error(integrator::SplitSubIntegrator)
             integrator.status.retcode != ReturnCode.Default
         return integrator.status.retcode
     end
-    if DiffEqBase.NAN_CHECK(integrator.dtcache) || DiffEqBase.NAN_CHECK(integrator.dt)
+    if isnan(integrator.dtcache) || isnan(integrator.dt)
         _is_verbose(integrator.opts.verbose) &&
             @warn("NaN dt detected. Likely a NaN value in the state, parameters, or derivative value caused this outcome.")
         return ReturnCode.DtNaN
