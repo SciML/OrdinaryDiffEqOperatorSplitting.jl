@@ -1,5 +1,4 @@
 using OrdinaryDiffEqOperatorSplitting
-import OrdinaryDiffEqOperatorSplitting: OrdinaryDiffEqOperatorSplitting as OS
 using Test
 
 import SciMLBase: ReturnCode
@@ -63,77 +62,14 @@ eqs = [
 @named testmodel2 = System(eqs, time)
 testsys2 = mtkcompile(testmodel2; sort_eqs = false)
 
-# Test whether adaptive code path works in principle
-struct FakeAdaptiveAlgorithm{T, T2} <: OS.AbstractOperatorSplittingAlgorithm
-    alg::T
-    inner_algs::T2   # delegate inner_algs to the wrapped algorithm
-end
-FakeAdaptiveAlgorithm(alg) = FakeAdaptiveAlgorithm(alg, alg.inner_algs)
-
-struct FakeAdaptiveAlgorithmCache{T} <: OS.AbstractOperatorSplittingCache
-    cache::T
-end
-
-@inline DiffEqBase.isadaptive(::FakeAdaptiveAlgorithm) = true
-
-@inline function OS.stepsize_controller!(
-        integrator::OS.OperatorSplittingIntegrator, alg::FakeAdaptiveAlgorithm
-    )
-    return nothing
-end
-
-@inline function OS.step_accept_controller!(
-        integrator::OS.OperatorSplittingIntegrator, alg::FakeAdaptiveAlgorithm, q
-    )
-    integrator.dt = integrator.dtcache
-    return nothing
-end
-@inline function OS.step_reject_controller!(
-        integrator::OS.OperatorSplittingIntegrator, alg::FakeAdaptiveAlgorithm, q
-    )
-    error("The tests should never run into this scenario!")
-    return nothing
-end
-
-# Override init_cache to wrap the inner cache in FakeAdaptiveAlgorithmCache
-function OS.init_cache(
-        f::GenericSplitFunction, alg::FakeAdaptiveAlgorithm;
-        kwargs...
-    )
-    inner_cache = OS.init_cache(f, alg.alg; kwargs...)
-    return FakeAdaptiveAlgorithmCache(inner_cache)
-end
-
-@inline DiffEqBase.get_tmp_cache(
-    integrator::OS.OperatorSplittingIntegrator,
-    alg::OS.AbstractOperatorSplittingAlgorithm,
-    cache::FakeAdaptiveAlgorithmCache
-) = DiffEqBase.get_tmp_cache(integrator, alg, cache.cache)
-
-@inline function OS._perform_step!(
-        outer_integrator,
-        subintegrators::Tuple,
-        cache::FakeAdaptiveAlgorithmCache,
-        dt
-    )
-    return OS._perform_step!(
-        outer_integrator, subintegrators, cache.cache, dt
-    )
-end
-
-FakeAdaptiveLTG(inner) = FakeAdaptiveAlgorithm(LieTrotterGodunov(inner))
-FakeAdaptiveSM(inner) = FakeAdaptiveAlgorithm(StrangMarchuk(inner))
-
-function Base.show(io::IO, alg::FakeAdaptiveAlgorithm)
-    print(io, "FAKE (")
-    Base.show(io, alg.alg)
-    return print(io, ")")
-end
-
-# StrangMarchuk steps child 1 twice per outer step (two half-steps).
+# Steps a child takes per outer step: StrangMarchuk steps child 1 twice (two
+# half-steps), the palindromic pair steps every child twice (once per sequence).
 _sub1_iter_factor(::LieTrotterGodunov) = 1
 _sub1_iter_factor(::StrangMarchuk) = 2
-_sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
+_sub1_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
+_sub2_iter_factor(::LieTrotterGodunov) = 1
+_sub2_iter_factor(::StrangMarchuk) = 1
+_sub2_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +99,7 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
 
     nsteps = ceil(Int, (tspan[2] - tspan[1]) / dt)
 
-    for TimeStepperType in (LieTrotterGodunov, FakeAdaptiveLTG, StrangMarchuk, FakeAdaptiveSM)
+    for TimeStepperType in (LieTrotterGodunov, StrangMarchuk, PalindromicPairLieTrotterGodunov)
         @testset "$tstepper" for (prob, tstepper) in (
                 (prob1a, TimeStepperType((Euler(), Euler()))),
                 (prob1a, TimeStepperType((Tsit5(), Euler()))),
@@ -188,6 +124,7 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
             sub1 = integrator.child_subintegrators[1]
             sub2 = integrator.child_subintegrators[2]
             expected_sub1_iters = _sub1_iter_factor(tstepper) * nsteps
+            expected_sub2_iters = _sub2_iter_factor(tstepper) * nsteps
 
             DiffEqBase.solve!(integrator)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
@@ -201,7 +138,7 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
             @test sub1.iter == expected_sub1_iters
 
             @test sub2.t ≈ tspan[2]
-            @test sub2.iter == nsteps
+            @test sub2.iter == expected_sub2_iters
 
             DiffEqBase.reinit!(integrator; dt = dt)
             @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
@@ -233,55 +170,64 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
             @test sub1.iter == expected_sub1_iters
 
             @test sub2.t ≈ tspan[2]
-            @test sub2.iter == nsteps
+            @test sub2.iter == expected_sub2_iters
         end
     end
 
-    for TimeStepperType in (FakeAdaptiveLTG, FakeAdaptiveSM)
-        @testset "Adaptive solver type $TimeStepperType | $tstepper" for (prob, tstepper) in (
-                (prob1a, TimeStepperType((Tsit5(), Tsit5()))),
-                (prob2, TimeStepperType((Tsit5(), TimeStepperType((Tsit5(), Tsit5()))))),
-            )
-            integrator = DiffEqBase.init(
-                prob, tstepper, dt = dt, verbose = true, alias_u0 = false, adaptive = true
-            )
-            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            DiffEqBase.solve!(integrator)
-            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
-            ufinal = copy(integrator.u)
-            @test isapprox(ufinal, trueu, atol = 1.0e-6)
-            @test integrator.t ≈ tspan[2]
-            @test integrator.dtcache ≈ dt
-            @test integrator.iter == nsteps
+    @testset "Adaptive splitting | $tstepper" for (prob, tstepper) in (
+            (prob1a, PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5()))),
+            (
+                prob2, PalindromicPairLieTrotterGodunov(
+                    (Tsit5(), PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5())))
+                ),
+            ),
+        )
+        # PPLTG is adaptive by default; the integrator interface has to keep working
+        # while the controller reshapes the step sequence.
+        integrator = DiffEqBase.init(
+            prob, tstepper, dt = dt, verbose = true, alias_u0 = false
+        )
+        @test integrator.opts.adaptive
+        @test integrator.controller !== nothing
+        @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
+        DiffEqBase.solve!(integrator)
+        @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
+        ufinal = copy(integrator.u)
+        @test isapprox(ufinal, trueu, atol = 1.0e-6)
+        @test integrator.t ≈ tspan[2]
+        niters = integrator.iter
 
-            DiffEqBase.reinit!(integrator; dt = dt)
-            @test integrator.dt == dt
-            @test integrator.dt == integrator.dtcache
-            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            for (u, t) in TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
-            end
-            @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
-            @test integrator.t ≈ tspan[2]
-            @test integrator.dtcache ≈ dt
-            @test integrator.iter == nsteps
+        # A reinitialized adaptive solve is deterministic.
+        DiffEqBase.reinit!(integrator; dt = dt)
+        @test integrator.dt == dt
+        @test integrator.dt == integrator.dtcache
+        @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
+        DiffEqBase.solve!(integrator)
+        @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
+        @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
+        @test integrator.t ≈ tspan[2]
+        @test integrator.iter == niters
 
-            DiffEqBase.reinit!(integrator; dt = dt)
-            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            for (uprev, tprev, u, t) in intervals(integrator)
-            end
-            @test isapprox(ufinal, integrator.u, atol = 1.0e-12)
-            @test integrator.t ≈ tspan[2]
-            @test integrator.dtcache ≈ dt
-            @test integrator.iter == nsteps
-
-            DiffEqBase.reinit!(integrator; dt = dt)
-            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
-            DiffEqBase.solve!(integrator)
-            @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success
-            @test integrator.t ≈ tspan[2]
-            @test integrator.dtcache ≈ dt
-            @test integrator.iter == nsteps
+        # The iteration protocols land on the same time points despite the
+        # controller-driven step sequence in between.
+        DiffEqBase.reinit!(integrator; dt = dt)
+        for (u, t) in TimeChoiceIterator(integrator, tspan[1]:5.0:tspan[2])
         end
+        @test isapprox(integrator.u, trueu, atol = 1.0e-6)
+        @test integrator.t ≈ tspan[2]
+
+        DiffEqBase.reinit!(integrator; dt = dt)
+        for (uprev, tprev, u, t) in intervals(integrator)
+        end
+        @test isapprox(integrator.u, trueu, atol = 1.0e-6)
+        @test integrator.t ≈ tspan[2]
+    end
+
+    @testset "PalindromicPairLieTrotterGodunov requires two operators" begin
+        @test_throws ArgumentError PalindromicPairLieTrotterGodunov(
+            (Euler(), Euler(), Euler())
+        )
+        @test_throws ArgumentError PalindromicPairLieTrotterGodunov((Euler(),))
     end
 
     @testset "StrangMarchuk with 3 operators" begin
@@ -343,6 +289,7 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
         for (TimeStepperType, expected_order) in (
                 (LieTrotterGodunov, 1),
                 (StrangMarchuk, 2),
+                (PalindromicPairLieTrotterGodunov, 2),
             )
             @testset "$TimeStepperType (order $expected_order)" begin
                 errors = map(dts) do dt_i
@@ -377,7 +324,7 @@ _sub1_iter_factor(alg::FakeAdaptiveAlgorithm) = _sub1_iter_factor(alg.alg)
         fsplit_NaN = GenericSplitFunction((f1, f_NaN), (f1dofs, f3dofs))
         prob_NaN = OperatorSplittingProblem(fsplit_NaN, u0, tspan)
 
-        for TimeStepperType in (LieTrotterGodunov, StrangMarchuk)
+        for TimeStepperType in (LieTrotterGodunov, StrangMarchuk, PalindromicPairLieTrotterGodunov)
             @testset "Solver type $TimeStepperType | $tstepper" for tstepper in (
                     TimeStepperType((Euler(), Euler())),
                     TimeStepperType((Tsit5(), Euler())),

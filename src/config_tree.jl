@@ -368,6 +368,30 @@ signed_dt_tree(config::ConfigTree, tdir, ::Type{tType}) where {tType} = ConfigTr
 )
 
 """
+    default_adaptive_option(f, alg)
+
+The default `adaptive` setting of `init`: a [`TreeOption`](@ref) in which every node
+adapts exactly if its own algorithm is adaptive. Passing a scalar `adaptive` instead
+configures the whole tree, including leaves whose algorithm cannot comply.
+"""
+function default_adaptive_option(
+        f::GenericSplitFunction, alg::AbstractOperatorSplittingAlgorithm
+    )
+    opt = TreeOption(f, SciMLBase.isadaptive(alg))
+    _default_adaptive!(opt, alg)
+    return opt
+end
+
+function _default_adaptive!(opt::TreeOption, alg)
+    opt.value = SciMLBase.isadaptive(alg)
+    inner = alg isa AbstractOperatorSplittingAlgorithm ? alg.inner_algs : ()
+    for (child, inner_alg) in zip(opt.children, inner)
+        _default_adaptive!(child, inner_alg)
+    end
+    return
+end
+
+"""
     warn_non_adaptive(alg, config)
 
 Warn about every splitting node that was asked to be adaptive although its algorithm
@@ -394,7 +418,11 @@ inner_values(values::NamedTuple) =
     NamedTuple{filter(!in(NODE_OPTION_KEYS), keys(values))}(values)
 
 # ... of which a splitting node understands these.
-const SPLIT_OPTION_KEYS = (:dtmin, :dtmax, :failfactor, :isoutofdomain)
+const SPLIT_OPTION_KEYS = (
+    :dtmin, :dtmax, :failfactor, :isoutofdomain,
+    :abstol, :reltol, :internalnorm,
+    :qmin, :qmax, :gamma, :qsteady_min, :qsteady_max,
+)
 
 function split_integrator_options(values::NamedTuple)
     inner = inner_values(values)

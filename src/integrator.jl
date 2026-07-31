@@ -6,13 +6,23 @@ end
 
 IntegratorStats() = IntegratorStats(0, 0)
 
-Base.@kwdef mutable struct IntegratorOptions{tType, fType, vbType, F3}
+Base.@kwdef mutable struct IntegratorOptions{tType, fType, vbType, F3, atolType, rtolType, normType, qType}
     adaptive::Bool
     dtmin::tType = eps(Float64)
     dtmax::tType = Inf
     failfactor::fType = 4.0
     verbose::vbType = DEFAULT_VERBOSITY
     isoutofdomain::F3 = DiffEqBase.ODE_DEFAULT_ISOUTOFDOMAIN
+    # Error control, used when the node's algorithm provides an error estimate.
+    abstol::atolType = 1.0e-6
+    reltol::rtolType = 1.0e-3
+    internalnorm::normType = DiffEqBase.ODE_DEFAULT_NORM
+    # Step size controller limits, following the OrdinaryDiffEq conventions.
+    qmin::qType = 0.2
+    qmax::qType = 10.0
+    gamma::qType = 0.9
+    qsteady_min::qType = 1.0
+    qsteady_max::qType = 1.0
 end
 
 
@@ -175,6 +185,7 @@ mutable struct OperatorSplittingIntegrator{
     child_synchronizers::childSyncType      # Tuple
     iter::Int
     controller::controllerType
+    EEst::tType  # error estimate of the last attempted step (NaN when no controller runs)
     opts::optionsType
     stats::IntegratorStats
     tdir::tType
@@ -218,15 +229,20 @@ function SciMLBase.__init(
         save_everystep = false,
         callback = nothing,
         advance_to_tstop = false,
-        adaptive = isadaptive(alg),
+        adaptive = nothing,
         controller = nothing,
-        # controller = OrdinaryDiffEqCore.PIController(0.14, 0.08),
         alias_u0 = false,
         verbose = true,
         kwargs...
     )
     (; u0, p) = prob
     t0, tf = prob.tspan
+
+    # By default every node adapts exactly if its own algorithm does; a scalar or a
+    # TreeOption overrides the whole tree explicitly.
+    if adaptive === nothing
+        adaptive = default_adaptive_option(prob.f, alg)
+    end
 
     # Every setting is either one value for the whole tree or a TreeOption carrying a
     # value per node. Beyond the four this integrator handles itself, whatever the
@@ -283,6 +299,9 @@ function SciMLBase.__init(
     child_solution_indices = ntuple(i -> prob.f.solution_indices[i], length(prob.f.functions))
     child_synchronizers = ntuple(i -> prob.f.synchronizers[i], length(prob.f.functions))
 
+    root_controller = _node_controller(alg, config.values)
+    EEst = root_controller === nothing ? tType(NaN) : one(tType)
+
     integrator = OperatorSplittingIntegrator(
         prob.f,
         alg,
@@ -301,7 +320,8 @@ function SciMLBase.__init(
         child_solution_indices,
         child_synchronizers,
         0,
-        config.values.controller,
+        root_controller,
+        EEst,
         split_integrator_options(config.values),
         IntegratorStats(),
         tType(tstops_internal.ordering isa BinaryHeaps.FasterForward ? 1 : -1),
@@ -346,6 +366,8 @@ function DiffEqBase.reinit!(
     integrator.tstops, integrator.saveat =
         tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     integrator.iter = 0
+    integrator.EEst = integrator.controller === nothing ?
+        oftype(integrator.EEst, NaN) : one(integrator.EEst)
     if erase_sol
         resize!(integrator.sol.t, 0)
         resize!(integrator.sol.u, 0)
@@ -443,9 +465,7 @@ function _subreinit_child!(
     sub.last_step_failed = false
     sub.status = SplitSubIntegratorStatus(ReturnCode.Default)
     # Reset EEst to its appropriate default
-    if isadaptive(sub)
-        sub.EEst = one(sub.EEst)
-    end
+    sub.EEst = sub.controller === nothing ? oftype(sub.EEst, NaN) : one(sub.EEst)
     # Recurse into this node's children
     _subreinit_tuple!(
         f_child,
@@ -499,22 +519,16 @@ end
 # ---------------------------------------------------------------------------
 function reject_step!(integrator::AnySplitIntegrator)
     OrdinaryDiffEqCore.increment_reject!(integrator.stats)
-    return reject_step!(integrator, integrator.cache, integrator.controller)
-end
-function reject_step!(integrator::AnySplitIntegrator, cache, controller)
+    if length(integrator.uprev) == 0
+        error("Cannot roll back integrator. Aborting time integration step at $(integrator.t).")
+    end
     integrator.u .= integrator.uprev
     rollback_children!(integrator)
     return nothing
 end
-function reject_step!(integrator::AnySplitIntegrator, cache, ::Nothing)
-    if length(integrator.uprev) == 0
-        error("Cannot roll back integrator. Aborting time integration step at $(integrator.t).")
-    end
-    return nothing
-end
 
 function should_accept_step(integrator::OperatorSplittingIntegrator)
-    integrator.force_stepfail || integrator.isout && return false
+    (integrator.force_stepfail || integrator.isout) && return false
     return should_accept_step(integrator, integrator.cache, integrator.controller)
 end
 function should_accept_step(integrator::SplitSubIntegrator)
@@ -523,6 +537,10 @@ function should_accept_step(integrator::SplitSubIntegrator)
 end
 function should_accept_step(integrator::AnySplitIntegrator, cache, ::Nothing)
     return !(integrator.force_stepfail)
+end
+# An active controller additionally requires the error estimate to pass.
+function should_accept_step(integrator::AnySplitIntegrator, cache, controller)
+    return integrator.EEst <= one(integrator.EEst)
 end
 
 function accept_step!(integrator::AnySplitIntegrator)
@@ -543,23 +561,31 @@ function update_uprev!(integrator::AnySplitIntegrator)
     return nothing
 end
 
-# Roll back each child's local buffer to match master u.
-# For DEIntegrators the leaf will be re-synced via forward_sync before the
-# next attempt, so there is nothing to do here.
-rollback_children!(integrator::OperatorSplittingIntegrator) = rollback_children!(integrator.child_subintegrators, integrator.u)
-@unroll function rollback_children!(children::Tuple, u_master)
+# Roll a node's children back to the state of the node itself: the local solution
+# buffers are refilled from the parent's (already restored) `u` and the child clocks
+# are moved back to the parent's time. Leaf DEIntegrators only need their clock
+# reset -- their `u` is restored by the forward sync before the next solve.
+rollback_children!(parent::AnySplitIntegrator) = _rollback_children!(
+    parent.child_subintegrators, parent.child_solution_indices, parent.u, parent.t
+)
+@unroll function _rollback_children!(children::Tuple, solution_indices::Tuple, u_parent, t)
+    i = 0
     @unroll for child in children
-        rollback_child!(child, u_master)
+        i += 1
+        rollback_child!(child, u_parent, solution_indices[i], t)
     end
 end
-function rollback_child!(child::SplitSubIntegrator, u_master)
-    child.u .= @view u_master[child.solution_indices]
+function rollback_child!(child::SplitSubIntegrator, u_parent, solution_indices, t)
+    child.u .= @view u_parent[solution_indices]
     RecursiveArrayTools.recursivecopy!(child.uprev, child.u)
-    _rollback_children!(child.child_subintegrators, u_master)
+    child.t = t
+    child.tprev = t
+    rollback_children!(child)
     return nothing
 end
-function rollback_child!(child::DEIntegrator, u_master)
-    # forward_sync before the next sub-step will restore this correctly.
+function rollback_child!(child::DEIntegrator, u_parent, solution_indices, t)
+    child.t = t
+    child.tprev = t
     return nothing
 end
 
@@ -674,18 +700,37 @@ function step_footer!(integrator::AnySplitIntegrator)
         step_accept_controller!(integrator)
         validate_time_point(integrator)
     elseif integrator.force_stepfail
+        # A failed inner solve tells us nothing about the error, so back off by the
+        # failfactor instead of consulting the controller.
         if isadaptive(integrator)
-            step_reject_controller!(integrator)
-            OrdinaryDiffEqCore.post_newton_controller!(integrator, integrator.alg)
+            _propose_dt!(integrator, integrator.dt / integrator.opts.failfactor)
+            abort_below_dtmin!(integrator)
         elseif integrator.dtchangeable
             integrator.dt /= integrator.opts.failfactor
         elseif integrator.last_step_failed
             return
         end
         integrator.last_step_failed = true
+    else
+        # The controller rejected the step (EEst > 1): shrink dt and retry.
+        step_reject_controller!(integrator)
+        abort_below_dtmin!(integrator)
+        integrator.last_step_failed = true
     end
     return nothing
 end
+
+function abort_below_dtmin!(integrator::AnySplitIntegrator)
+    abs(integrator.dt) > abs(OrdinaryDiffEqCore.timedepentdtmin(integrator)) && return nothing
+    _is_verbose(integrator.opts.verbose) &&
+        @warn("dt <= dtmin. Aborting. There is either an error in your model specification or the true solution is unstable.")
+    _set_retcode!(integrator, ReturnCode.DtLessThanMin)
+    return nothing
+end
+
+_set_retcode!(integrator::OperatorSplittingIntegrator, code) =
+    integrator.sol = SciMLBase.solution_new_retcode(integrator.sol, code)
+_set_retcode!(integrator::SplitSubIntegrator, code) = integrator.status.retcode = code
 
 # ---------------------------------------------------------------------------
 # __solve / solve! / step!
@@ -835,35 +880,72 @@ function (integrator::OperatorSplittingIntegrator)(tmp, t)
     )
 end
 
-# Stepsize controller hooks
-@inline function stepsize_controller!(integrator::AnySplitIntegrator)
-    isadaptive(integrator.alg) || return nothing
-    stepsize_controller!(integrator, integrator.alg)
+# ---------------------------------------------------------------------------
+# Step size control
+#
+# A splitting node runs a controller only if it is adaptive and its algorithm
+# provides an error estimate (written to the node's `EEst` by `_perform_step!`);
+# its `controller` is `nothing` otherwise. Following the OrdinaryDiffEq
+# conventions the step is accepted if `EEst <= 1`.
+# ---------------------------------------------------------------------------
+
+"""
+    default_controller(alg::AbstractOperatorSplittingAlgorithm)
+
+The step size controller an adaptive splitting node runs with when `init` is not
+given an explicit `controller`.
+"""
+default_controller(::AbstractOperatorSplittingAlgorithm) = OrdinaryDiffEqCore.IController()
+
+function _node_controller(alg::AbstractOperatorSplittingAlgorithm, values::NamedTuple)
+    (values.adaptive && SciMLBase.isadaptive(alg)) || return nothing
+    values.controller === nothing || return values.controller
+    return default_controller(alg)
+end
+
+"""
+    alg_adaptive_order(alg::AbstractOperatorSplittingAlgorithm)
+
+Order of the error estimator of an adaptive operator splitting algorithm; every
+algorithm with `SciMLBase.isadaptive(alg) == true` has to implement this.
+"""
+function alg_adaptive_order end
+
+_controller_expo(alg) = 1 / (alg_adaptive_order(alg) + 1)
+
+@inline step_accept_controller!(integrator::AnySplitIntegrator) =
+    step_accept_controller!(integrator, integrator.controller)
+step_accept_controller!(integrator::AnySplitIntegrator, ::Nothing) = nothing
+function step_accept_controller!(
+        integrator::AnySplitIntegrator, controller::OrdinaryDiffEqCore.IController
+    )
+    (; qmin, qmax, gamma, qsteady_min, qsteady_max) = integrator.opts
+    EEst = integrator.EEst
+    q = if iszero(EEst)
+        inv(qmax)
+    else
+        clamp(EEst^_controller_expo(integrator.alg) / gamma, inv(qmax), inv(qmin))
+    end
+    qsteady_min <= q <= qsteady_max && (q = one(q))
+    _propose_dt!(integrator, integrator.dt / q)
     return nothing
 end
-@inline function stepsize_controller!(integrator::AnySplitIntegrator, alg::AbstractOperatorSplittingAlgorithm)
-    isadaptive(alg) || return nothing
-    #stepsize_controller!(integrator, integrator.controller)
+
+@inline step_reject_controller!(integrator::AnySplitIntegrator) =
+    step_reject_controller!(integrator, integrator.controller)
+step_reject_controller!(integrator::AnySplitIntegrator, ::Nothing) = nothing
+function step_reject_controller!(
+        integrator::AnySplitIntegrator, controller::OrdinaryDiffEqCore.IController
+    )
+    (; qmin, gamma) = integrator.opts
+    q11 = integrator.EEst^_controller_expo(integrator.alg)
+    _propose_dt!(integrator, integrator.dt / min(inv(qmin), q11 / gamma))
     return nothing
 end
-@inline function step_accept_controller!(integrator::AnySplitIntegrator)
-    isadaptive(integrator.alg) || return nothing
-    step_accept_controller!(integrator, integrator.alg)
-    return nothing
-end
-@inline function step_accept_controller!(integrator::AnySplitIntegrator, alg::AbstractOperatorSplittingAlgorithm)
-    isadaptive(alg) || return nothing
-    #step_accept_controller!(integrator, integrator.controller)
-    return nothing
-end
-@inline function step_reject_controller!(integrator::AnySplitIntegrator)
-    isadaptive(integrator.alg) || return nothing
-    step_reject_controller!(integrator, integrator.alg)
-    return nothing
-end
-@inline function step_reject_controller!(integrator::AnySplitIntegrator, alg::AbstractOperatorSplittingAlgorithm)
-    isadaptive(integrator.alg) || return nothing
-    # step_reject_controller!(integrator, integrator.controller)
+
+function _propose_dt!(integrator::AnySplitIntegrator, dtnew)
+    integrator.dt = dtnew
+    integrator.dtcache = abs(dtnew)
     return nothing
 end
 
@@ -899,7 +981,6 @@ end
 
 function __step!(integrator::AnySplitIntegrator)
     advance_solution_by!(integrator, integrator.dt)
-    stepsize_controller!(integrator) # FIXME this should go into the footer
     return nothing
 end
 
@@ -935,17 +1016,27 @@ function advance_solution_by!(
     _perform_step!(outer, children, cache, dt)
 
     if outer.force_stepfail && all(isadaptive.(children))
-        # We do not know recover at this point, as an decrease in the solve
-        # interval is unlikely to help here.
+        # We do not know how to recover at this point: the children handled the
+        # solve interval adaptively themselves, so shrinking it further is unlikely
+        # to help. Surface the diagnosis of the failed child instead of retrying.
         outer.sol = SciMLBase.solution_new_retcode(
             outer.sol,
-            ReturnCode.Failure
+            _first_failed_child_retcode(children)
         )
         return
     end
 
     return
 end
+
+@unroll function _first_failed_child_retcode(children::Tuple)
+    @unroll for child in children
+        _child_failed(child) && return _failure_retcode(child)
+    end
+    return ReturnCode.Failure
+end
+_failure_retcode(child::DEIntegrator) = child.sol.retcode
+_failure_retcode(child::SplitSubIntegrator) = child.status.retcode
 
 function advance_solution_by!(
         outer::SplitSubIntegrator,
@@ -1069,7 +1160,8 @@ function _build_child(
         uprev = uprev_sub, u = u_sub,
     )
 
-    EEst_val = isadaptive(alg) ? one(tType) : tType(NaN)
+    controller = _node_controller(alg, config.values)
+    EEst_val = controller === nothing ? tType(NaN) : one(tType)
 
     sub = SplitSubIntegrator(
         alg,
@@ -1081,7 +1173,7 @@ function _build_child(
         tstops_internal,
         0,              # iter
         EEst_val,
-        config.values.controller,
+        controller,
         false, false, false,  # force_stepfail, last_step_failed, u_modified
         SplitSubIntegratorStatus(),
         IntegratorStats(),

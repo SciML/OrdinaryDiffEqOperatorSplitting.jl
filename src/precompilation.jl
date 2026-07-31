@@ -48,4 +48,10 @@ end
     integrator_sm = DiffEqBase.init(prob_sm, tstepper_sm, dt = 0.01, verbose = false)
     step!(integrator_sm)
     solve!(integrator_sm)
+
+    # Precompile PalindromicPairLieTrotterGodunov (runs its controller by default)
+    tstepper_pp = PalindromicPairLieTrotterGodunov((Euler(), Euler()))
+    integrator_pp = DiffEqBase.init(prob_sm, tstepper_pp, dt = 0.01, verbose = false)
+    step!(integrator_pp)
+    solve!(integrator_pp)
 end

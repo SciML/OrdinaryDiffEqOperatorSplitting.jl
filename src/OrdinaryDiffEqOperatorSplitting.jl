@@ -15,7 +15,7 @@ import SymbolicIndexingInterface: variable_symbols
 import RecursiveArrayTools
 
 import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isdtchangeable,
-    stepsize_controller!, step_accept_controller!, step_reject_controller!
+    step_accept_controller!, step_reject_controller!
 
 # In OrdinaryDiffEq v7 / DiffEqBase v7, passing verbose::Bool to inner ODE
 # integrators is no longer supported. Convert Bool → DEVerbosity when available.
@@ -50,7 +50,8 @@ include("integrator.jl")
 include("solver.jl")
 include("utils.jl")
 
-export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov, StrangMarchuk
+export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov, StrangMarchuk,
+    PalindromicPairLieTrotterGodunov
 export SplitNode, TreeOption
 
 include("precompilation.jl")
