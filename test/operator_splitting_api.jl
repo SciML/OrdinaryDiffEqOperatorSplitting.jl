@@ -223,14 +223,7 @@ _sub2_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
         @test integrator.t ≈ tspan[2]
     end
 
-    @testset "PalindromicPairLieTrotterGodunov requires two operators" begin
-        @test_throws ArgumentError PalindromicPairLieTrotterGodunov(
-            (Euler(), Euler(), Euler())
-        )
-        @test_throws ArgumentError PalindromicPairLieTrotterGodunov((Euler(),))
-    end
-
-    @testset "StrangMarchuk with 3 operators" begin
+    @testset "Three operators" begin
         dt = 0.01π
         # f1 + f3 + f3 = f1 + f2, so the reference solution is the same trueu.
         f1dofs = [1, 2, 3]
@@ -239,10 +232,18 @@ _sub2_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
         prob3 = OperatorSplittingProblem(fsplit3, u0, tspan)
         nsteps = ceil(Int, (tspan[2] - tspan[1]) / dt)
 
+        # StrangMarchuk solves all but the last operator twice (two half-steps);
+        # the palindromic pair solves every operator once per sequence.
+        sub_iter_factors(::StrangMarchuk) = (2, 2, 1)
+        sub_iter_factors(::PalindromicPairLieTrotterGodunov) = (2, 2, 2)
+
         @testset "$tstepper" for tstepper in (
                 StrangMarchuk((Euler(), Euler(), Euler())),
                 StrangMarchuk((Tsit5(), Euler(), Tsit5())),
                 StrangMarchuk((Tsit5(), Tsit5(), Tsit5())),
+                PalindromicPairLieTrotterGodunov((Euler(), Euler(), Euler())),
+                PalindromicPairLieTrotterGodunov((Tsit5(), Euler(), Tsit5())),
+                PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5(), Tsit5())),
             )
             integrator = DiffEqBase.init(
                 prob3, tstepper, dt = dt, verbose = true, alias_u0 = false, adaptive = false
@@ -253,61 +254,14 @@ _sub2_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
             @test integrator.t ≈ tspan[2]
             @test integrator.iter == nsteps
 
-            sub1 = integrator.child_subintegrators[1]
-            sub2 = integrator.child_subintegrators[2]
-            sub3 = integrator.child_subintegrators[3]
-            # Palindromic: children 1 & 2 get two half-steps, child 3 gets one full step
-            @test sub1.iter == 2 * nsteps
-            @test sub2.iter == 2 * nsteps
-            @test sub3.iter == nsteps
-        end
-    end
-
-    @testset "Convergence order" begin
-        # Use non-commuting operators so splitting error is non-zero.
-        # A = diag(-1,-2), B = [0 0.5; 0.5 0] have [A,B] ≠ 0.
-        function ode_conv_A(du, u, p, t)
-            du[1] = -u[1]
-            return du[2] = -2 * u[2]
-        end
-        function ode_conv_B(du, u, p, t)
-            du[1] = 0.5 * u[2]
-            return du[2] = 0.5 * u[1]
-        end
-        fA = ODEFunction(ode_conv_A)
-        fB = ODEFunction(ode_conv_B)
-
-        conv_tspan = (0.0, 1.0)
-        conv_u0 = [1.0, 1.0]
-        conv_trueu = exp(conv_tspan[2] * [-1.0 0.5; 0.5 -2.0]) * conv_u0
-
-        conv_dofs = [1, 2]
-        fsplit_conv = GenericSplitFunction((fA, fB), (conv_dofs, conv_dofs))
-        prob_conv = OperatorSplittingProblem(fsplit_conv, conv_u0, conv_tspan)
-
-        dts = [0.1, 0.05, 0.025]
-        for (TimeStepperType, expected_order) in (
-                (LieTrotterGodunov, 1),
-                (StrangMarchuk, 2),
-                (PalindromicPairLieTrotterGodunov, 2),
-            )
-            @testset "$TimeStepperType (order $expected_order)" begin
-                errors = map(dts) do dt_i
-                    tstepper = TimeStepperType((Tsit5(), Tsit5()))
-                    integrator = DiffEqBase.init(
-                        prob_conv, tstepper, dt = dt_i, verbose = false,
-                        alias_u0 = false, adaptive = false
-                    )
-                    DiffEqBase.solve!(integrator)
-                    maximum(abs, integrator.u .- conv_trueu)
-                end
-                for i in 1:(length(errors) - 1)
-                    rate = log2(errors[i] / errors[i + 1])
-                    @test rate ≈ expected_order atol = 0.3
-                end
+            for (i, factor) in pairs(sub_iter_factors(tstepper))
+                @test integrator.child_subintegrators[i].t ≈ tspan[2]
+                @test integrator.child_subintegrators[i].iter == factor * nsteps
             end
         end
     end
+
+    # Convergence orders are covered systematically in test/convergence.jl.
 
     @testset "Instability detection" begin
         dt = 0.01π
@@ -325,6 +279,17 @@ _sub2_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
         prob_NaN = OperatorSplittingProblem(fsplit_NaN, u0, tspan)
 
         for TimeStepperType in (LieTrotterGodunov, StrangMarchuk, PalindromicPairLieTrotterGodunov)
+            # An adaptive root (PPLTG by default) retries escalated non-adaptive
+            # failures until its dt reaches dtmin, so it may also end in
+            # DtLessThanMin instead of surfacing the child diagnosis directly.
+            expected_retcodes = if TimeStepperType === PalindromicPairLieTrotterGodunov
+                (
+                    DiffEqBase.ReturnCode.Unstable, DiffEqBase.ReturnCode.DtNaN,
+                    DiffEqBase.ReturnCode.DtLessThanMin,
+                )
+            else
+                (DiffEqBase.ReturnCode.Unstable, DiffEqBase.ReturnCode.DtNaN)
+            end
             @testset "Solver type $TimeStepperType | $tstepper" for tstepper in (
                     TimeStepperType((Euler(), Euler())),
                     TimeStepperType((Tsit5(), Euler())),
@@ -332,12 +297,11 @@ _sub2_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
                     TimeStepperType((Tsit5(), Tsit5())),
                 )
                 integrator_NaN = DiffEqBase.init(
-                    prob_NaN, tstepper, dt = dt, verbose = true, alias_u0 = false
+                    prob_NaN, tstepper, dt = dt, verbose = false, alias_u0 = false
                 )
                 @test integrator_NaN.sol.retcode == DiffEqBase.ReturnCode.Default
                 DiffEqBase.solve!(integrator_NaN)
-                @test integrator_NaN.sol.retcode ∈
-                    (DiffEqBase.ReturnCode.Unstable, DiffEqBase.ReturnCode.DtNaN)
+                @test integrator_NaN.sol.retcode ∈ expected_retcodes
             end
         end
     end

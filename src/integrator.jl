@@ -267,12 +267,11 @@ function SciMLBase.__init(
         tstops = ()
     end
 
-    tstops_internal = OrdinaryDiffEqCore.initialize_tstops(
-        tType, tstops, d_discontinuities, prob.tspan
-    )
-    saveat_internal = OrdinaryDiffEqCore.initialize_saveat(tType, saveat, prob.tspan)
-    d_discontinuities_internal = OrdinaryDiffEqCore.initialize_d_discontinuities(
-        tType, d_discontinuities, prob.tspan
+    # Heaps store raw times and carry the integration direction in their ordering.
+    # (OrdinaryDiffEqCore's initialize_tstops stores tdir-scaled times instead, which
+    # is incompatible with the heaps reinit! rebuilds and breaks backward tspans.)
+    tstops_internal, saveat_internal = tstops_and_saveat_heaps(
+        t0, tf, (tstops..., d_discontinuities...), saveat
     )
 
     u = setup_u(prob, alg, alias_u0)
@@ -326,7 +325,7 @@ function SciMLBase.__init(
         EEst,
         split_integrator_options(config.values),
         IntegratorStats(),
-        tType(tstops_internal.ordering isa BinaryHeaps.FasterForward ? 1 : -1),
+        tType(tf > t0 ? 1 : -1),
         false,
         config,
     )
@@ -351,6 +350,11 @@ function DiffEqBase.reinit!(
         reinit_callbacks = true,
         reinit_retcode = true
     )
+    # The heap ordering types and every node's tdir are fixed at init, so a reinit!
+    # cannot flip the integration direction.
+    (tf > t0) == (integrator.tdir > 0) ||
+        error("reinit! cannot change the direction of integration. Build a new integrator instead.")
+
     # Without a `dt` every node is restored to the step size it was configured with,
     # so a multi-rate setup survives a reinit!. Passing one is equivalent to passing
     # it to `init`: a scalar reconfigures the whole tree, a TreeOption node by node.
@@ -484,20 +488,22 @@ end
 # ---------------------------------------------------------------------------
 function OrdinaryDiffEqCore.handle_tstop!(integrator::AnySplitIntegrator)
     if SciMLBase.has_tstop(integrator)
+        # The heaps store raw times; comparisons happen in tdir-space so that
+        # "ahead"/"behind" is direction independent.
         tdir_t = tdir(integrator) * integrator.t
-        tdir_tstop = SciMLBase.first_tstop(integrator)
+        tdir_tstop = tdir(integrator) * SciMLBase.first_tstop(integrator)
         if tdir_t == tdir_tstop
             while tdir_t == tdir_tstop
                 SciMLBase.pop_tstop!(integrator)
                 SciMLBase.has_tstop(integrator) ?
-                    (tdir_tstop = SciMLBase.first_tstop(integrator)) : break
+                    (tdir_tstop = tdir(integrator) * SciMLBase.first_tstop(integrator)) : break
             end
             notify_integrator_hit_tstop!(integrator)
         elseif tdir_t > tdir_tstop
             if !integrator.dtchangeable
                 SciMLBase.change_t_via_interpolation!(
                     integrator,
-                    tdir(integrator) * SciMLBase.pop_tstop!(integrator),
+                    SciMLBase.pop_tstop!(integrator),
                     Val{true}
                 )
                 notify_integrator_hit_tstop!(integrator)
@@ -548,8 +554,9 @@ function should_accept_step(
     return accept_step_controller(integrator, controller_cache, integrator.alg)
 end
 
+# `stats.naccept` is counted in `step_footer!` (which sees every accepted attempt,
+# including the final one); this header-side bookkeeping only prepares the next step.
 function accept_step!(integrator::AnySplitIntegrator)
-    OrdinaryDiffEqCore.increment_accept!(integrator.stats)
     integrator.success_iter += 1
     return accept_step!(integrator, integrator.cache, integrator.controller_cache)
 end
@@ -569,8 +576,10 @@ end
 
 # Roll a node's children back to the state of the node itself: the local solution
 # buffers are refilled from the parent's (already restored) `u` and the child clocks
-# are moved back to the parent's time. Leaf DEIntegrators only need their clock
-# reset -- their `u` is restored by the forward sync before the next solve.
+# are moved back to the parent's time. Leaves get their `u` restored here as well,
+# not only by the forward sync before the next solve: palindromic algorithms skip
+# that sync for the first child (`next_sync_is_continuous`), so a rollback that left
+# the leaf state stale would silently resume from the failed attempt.
 rollback_children!(parent::AnySplitIntegrator) = _rollback_children!(
     parent.child_subintegrators, parent.child_solution_indices, parent.u, parent.t
 )
@@ -586,12 +595,34 @@ function rollback_child!(child::SplitSubIntegrator, u_parent, solution_indices, 
     RecursiveArrayTools.recursivecopy!(child.uprev, child.u)
     child.t = t
     child.tprev = t
+    _reset_child_failure!(child)
     rollback_children!(child)
     return nothing
 end
 function rollback_child!(child::DEIntegrator, u_parent, solution_indices, t)
+    child.u .= @view u_parent[solution_indices]
+    RecursiveArrayTools.recursivecopy!(child.uprev, child.u)
+    mark_state_modified!(child)
     child.t = t
     child.tprev = t
+    _reset_child_failure!(child)
+    return nothing
+end
+
+# Clear a failed child's retcode so the retry of the nearest adaptive ancestor can
+# re-run it -- a transiently failed non-adaptive child would otherwise stay failed
+# forever and turn every escalated failure fatal.
+function _reset_child_failure!(child::SplitSubIntegrator)
+    _child_failed(child) && (child.status.retcode = ReturnCode.Default)
+    return nothing
+end
+function _reset_child_failure!(child::DEIntegrator)
+    # Based on the *stored* retcode (the sticky part), not on `check_error`: the
+    # rollback just restored this child's state, so a state-based check would
+    # already come back clean while the stored retcode still blocks re-stepping.
+    if child.sol.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
+        child.sol = SciMLBase.solution_new_retcode(child.sol, ReturnCode.Default)
+    end
     return nothing
 end
 
@@ -618,7 +649,7 @@ end
 function modify_dt_for_tstops!(integrator)
     if SciMLBase.has_tstop(integrator)
         tdir_t = integrator.tdir * integrator.t
-        tdir_tstop = SciMLBase.first_tstop(integrator)
+        tdir_tstop = integrator.tdir * SciMLBase.first_tstop(integrator)
         if integrator.opts.adaptive
             integrator.dt = integrator.tdir *
                 min(abs(integrator.dt), abs(tdir_tstop - tdir_t)) # step! to the end
@@ -657,12 +688,17 @@ function fix_solution_buffer_sizes!(integrator, sol)
     return
 end
 
+# Window for absorbing floating point drift when landing on a time point. Scaled
+# by the local time scale *and* the step size: near t = 0 (e.g. integrating
+# backward to zero) a purely value-relative window collapses below the ulp drift
+# the subdivided child steps accumulate.
+_snap_window(t, tstop, dt) =
+    100 * eps(float(max(abs(t), abs(tstop), abs(dt)) / oneunit(t))) * oneunit(t)
+
 function fixed_t_for_floatingpoint_error!(integrator::AnySplitIntegrator, ttmp)
     return if DiffEqBase.has_tstop(integrator)
-        tstop = integrator.tdir * DiffEqBase.first_tstop(integrator)
-        if abs(ttmp - tstop) <
-                100eps(float(max(integrator.t, tstop) / oneunit(integrator.t))) *
-                oneunit(integrator.t)
+        tstop = DiffEqBase.first_tstop(integrator)
+        if abs(ttmp - tstop) < _snap_window(integrator.t, tstop, integrator.dt)
             try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop)
             tstop
         else
@@ -673,8 +709,7 @@ function fixed_t_for_floatingpoint_error!(integrator::AnySplitIntegrator, ttmp)
     end
 end
 function try_snap_children_to_tstop!(integrator::SplitSubIntegrator, tstop)
-    if abs(tstop - integrator.t) <
-            100eps(float(max(integrator.t, tstop) / oneunit(integrator.t))) * oneunit(integrator.t)
+    if abs(tstop - integrator.t) < _snap_window(integrator.t, tstop, integrator.dt)
         integrator.t = tstop
     else
         @warn "Failed to snap timestep for integrator $(integrator.t) with parent integrator hitting the tstop $(tstop)."
@@ -682,8 +717,7 @@ function try_snap_children_to_tstop!(integrator::SplitSubIntegrator, tstop)
     return try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop)
 end
 function try_snap_children_to_tstop!(integrator::DEIntegrator, tstop)
-    return if abs(tstop - integrator.t) <
-            100eps(float(max(integrator.t, tstop) / oneunit(integrator.t))) * oneunit(integrator.t)
+    return if abs(tstop - integrator.t) < _snap_window(integrator.t, tstop, integrator.dt)
         integrator.t = tstop
     else
         @warn "Failed to snap timestep for integrator $(integrator.t) with parent integrator hitting the tstop $(tstop)."
@@ -691,10 +725,11 @@ function try_snap_children_to_tstop!(integrator::DEIntegrator, tstop)
 end
 
 function step_footer!(integrator::AnySplitIntegrator)
-    ttmp = integrator.t + tdir(integrator) * integrator.dt
+    ttmp = integrator.t + integrator.dt # dt is signed by the integration direction
     footer_reset_flags!(integrator)
     setup_validity_flags!(integrator, ttmp)
     if should_accept_step(integrator)
+        OrdinaryDiffEqCore.increment_accept!(integrator.stats)
         integrator.last_step_failed = false
         integrator.tprev = integrator.t
         integrator.t = fixed_t_for_floatingpoint_error!(integrator, ttmp)
@@ -706,16 +741,29 @@ function step_footer!(integrator::AnySplitIntegrator)
         step_accept_controller!(integrator)
         validate_time_point(integrator)
     elseif integrator.force_stepfail
-        # A failed inner solve tells us nothing about the error, so back off by the
-        # failfactor instead of consulting the step-size law.
-        if integrator.controller_cache !== nothing
+        # Failure escalation protocol: the failing node's own adaptivity decides.
+        fatal_rc = _fatal_child_retcode(integrator.child_subintegrators)
+        if fatal_rc !== ReturnCode.Default
+            # An *adaptive* child failed: it already exhausted its own step size
+            # adaptation, so retrying on a smaller interval cannot help. Propagate
+            # its diagnosis and stop.
+            _set_retcode!(integrator, fatal_rc)
+        elseif integrator.controller_cache !== nothing
+            # A non-adaptive descendant failed and this is the nearest adaptive
+            # ancestor: retry the step on a failfactor-shrunken interval, which
+            # shrinks the effective dt of the whole subtree. The failed inner solve
+            # tells us nothing about the error, so no step size law here. The
+            # header-side reject_step! resets the subtree, including retcodes.
             OrdinaryDiffEqCore.post_newton_controller!(integrator, integrator.alg)
             integrator.dtcache = abs(integrator.dt)
             abort_below_dtmin!(integrator)
-        elseif integrator.dtchangeable
-            integrator.dt /= integrator.opts.failfactor
-        elseif integrator.last_step_failed
-            return
+        else
+            # Non-adaptive node: escalate the failure to this node's parent. At a
+            # non-adaptive root this stops the time integration.
+            _set_retcode!(
+                integrator,
+                _first_failed_child_retcode(integrator.child_subintegrators)
+            )
         end
         integrator.last_step_failed = true
     else
@@ -752,7 +800,8 @@ end
 
 function DiffEqBase.solve!(integrator::OperatorSplittingIntegrator)
     while !isempty(integrator.tstops)
-        while tdir(integrator) * integrator.t < SciMLBase.first_tstop(integrator)
+        while tdir(integrator) * integrator.t <
+                tdir(integrator) * SciMLBase.first_tstop(integrator)
             step_header!(integrator)
             @timeit_debug "check_error" SciMLBase.check_error!(integrator) ∉ (
                 ReturnCode.Success, ReturnCode.Default,
@@ -802,12 +851,14 @@ function DiffEqBase.step!(integrator::AnySplitIntegrator)
     return
 end
 
+# SciML convention: `dt` is signed and its sign has to match the direction of
+# integration.
 function DiffEqBase.step!(integrator::AnySplitIntegrator, dt, stop_at_tdt = false)
     @timeit_debug "step!" begin
-        dt <= zero(dt) && error("dt must be positive")
+        tdir(integrator) * dt < zero(dt) && error("Cannot step backward.")
         stop_at_tdt && !integrator.dtchangeable &&
             error("Cannot stop at t + dt if dtchangeable is false")
-        tnext = integrator.t + tdir(integrator) * dt
+        tnext = integrator.t + dt
         stop_at_tdt && DiffEqBase.add_tstop!(integrator, tnext)
         while !reached_tstop(integrator, tnext, stop_at_tdt)
             step_header!(integrator)
@@ -816,6 +867,13 @@ function DiffEqBase.step!(integrator::AnySplitIntegrator, dt, stop_at_tdt = fals
             ) && return
             __step!(integrator)
             step_footer!(integrator)
+            # Pop every tstop as soon as it is reached, exactly like the solve!
+            # loop does. Intermediate stops before `tnext` do occur -- the stale
+            # `tnext` of an earlier failed attempt, or stops pushed down from the
+            # root -- and leaving one in the heap once we sit exactly on it makes
+            # the next header compute a zero step-to-tstop gap: the loop would
+            # then spin at fixed `t` forever, growing the child tstop heaps.
+            OrdinaryDiffEqCore.handle_tstop!(integrator)
         end
     end
     OrdinaryDiffEqCore.handle_tstop!(integrator)
@@ -928,8 +986,26 @@ function _node_controller_cache(
     ) where {tType}
     controller = _node_controller(alg, values)
     controller === nothing && return nothing
+    if _wants_discontinuity_detection(controller)
+        throw(
+            ArgumentError(
+                "discontinuity_detection is not supported by operator splitting nodes. \
+                Construct the controller for this node without it."
+            )
+        )
+    end
     return OrdinaryDiffEqCore.setup_controller_cache(alg, level_cache, controller, tType)
 end
+
+# The discontinuity handling of OrdinaryDiffEqCore's controllers needs integrator
+# state (callbacks, checkpoints) a splitting node does not have, so refuse it
+# up front instead of failing deep inside a rejected step.
+_wants_discontinuity_detection(controller) =
+    hasfield(typeof(controller), :basic) && _basic_discontinuity_detection(controller.basic)
+_basic_discontinuity_detection(basic::NamedTuple) =
+    get(basic, :discontinuity_detection, false) === true
+_basic_discontinuity_detection(basic) =
+    hasfield(typeof(basic), :discontinuity_detection) && basic.discontinuity_detection
 
 reinit_node_controller!(integrator::AnySplitIntegrator) =
     reinit_node_controller!(integrator, integrator.controller_cache)
@@ -976,6 +1052,12 @@ function step_accept_controller!(
     )
     q = stepsize_controller!(integrator, controller_cache, integrator.alg)
     dtnew = step_accept_controller!(integrator, controller_cache, integrator.alg, q)
+    # The proposal derives from the step actually taken -- which
+    # `modify_dt_for_tstops!` may have clipped to a tstop. After such a step the
+    # proposal is rebased and regrows at up to qmax per step; that matches what
+    # the error-based law knows (EEst belongs to the clipped step) and mirrors
+    # OrdinaryDiffEq. `dtcache` mirrors the standing proposal for `reinit!` and
+    # introspection.
     integrator.dt = dtnew
     integrator.dtcache = abs(dtnew)
     return nothing
@@ -1002,7 +1084,7 @@ is_past_t(integrator, t) =
     tdir(integrator) * (t - integrator.t) ≤ zero(integrator.t)
 function reached_tstop(integrator, tstop, stop_at_tstop = integrator.dtchangeable)
     if stop_at_tstop
-        integrator.t > tstop &&
+        tdir(integrator) * (integrator.t - tstop) > zero(integrator.t) &&
             error("Integrator missed stop at $tstop (current time=$(integrator.t)). Aborting.")
         return integrator.t ≈ tstop
     else
@@ -1058,20 +1140,21 @@ function advance_solution_by!(
         cache::AbstractOperatorSplittingCache,
         dt
     )
+    # Success and failure are both handled in step_footer! via the failure
+    # escalation protocol; nothing to decide here.
     _perform_step!(outer, children, cache, dt)
-
-    if outer.force_stepfail && all(isadaptive.(children))
-        # We do not know how to recover at this point: the children handled the
-        # solve interval adaptively themselves, so shrinking it further is unlikely
-        # to help. Surface the diagnosis of the failed child instead of retrying.
-        outer.sol = SciMLBase.solution_new_retcode(
-            outer.sol,
-            _first_failed_child_retcode(children)
-        )
-        return
-    end
-
     return
+end
+
+# Retcode of the first failed child whose failure is fatal (the child is adaptive,
+# so it already exhausted its own adaptation); `ReturnCode.Default` if none is.
+@unroll function _fatal_child_retcode(children::Tuple)
+    @unroll for child in children
+        if _child_failed(child) && _child_is_adaptive(child)
+            return _failure_retcode(child)
+        end
+    end
+    return ReturnCode.Default
 end
 
 @unroll function _first_failed_child_retcode(children::Tuple)
@@ -1080,8 +1163,10 @@ end
     end
     return ReturnCode.Failure
 end
-_failure_retcode(child::DEIntegrator) = child.sol.retcode
+_failure_retcode(child::DEIntegrator) = SciMLBase.check_error(child)
 _failure_retcode(child::SplitSubIntegrator) = child.status.retcode
+_child_is_adaptive(child::DEIntegrator) = child.opts.adaptive
+_child_is_adaptive(child::SplitSubIntegrator) = child.controller_cache !== nothing
 
 function advance_solution_by!(
         outer::SplitSubIntegrator,
@@ -1091,16 +1176,20 @@ function advance_solution_by!(
     )
     _perform_step!(outer, children, cache, dt)
 
-    if outer.force_stepfail
-        outer.status = SplitSubIntegratorStatus(ReturnCode.Failure)
-        return
+    # On force_stepfail the status is left clean: step_footer! either retries at
+    # this level (adaptive) or escalates by writing the failure into the status.
+    if !outer.force_stepfail
+        outer.status.retcode = ReturnCode.Success
     end
-
-    # All children succeeded: advance this node's time and counter
-    outer.status = SplitSubIntegratorStatus(ReturnCode.Success)
 
     return
 end
+
+# `dt` stays signed through the splitting tree, following the SciML `step!`
+# convention: the sign has to match the child's own integration direction, which
+# equals the tree's. Advancing a child *against* its direction (negative substeps
+# of higher order compositions) is not supported yet: leaf ODEIntegrators cannot
+# step against the tdir their tspan fixed at construction.
 
 # Recursion dispatch
 function advance_solution_by!(
@@ -1196,8 +1285,8 @@ function _build_child(
     u_sub = RecursiveArrayTools.recursivecopy(uouter[solution_indices])
     uprev_sub = RecursiveArrayTools.recursivecopy(uprevouter[solution_indices])
 
-    tstops_internal = OrdinaryDiffEqCore.initialize_tstops(
-        tType, tstops, d_discontinuities, prob.tspan
+    tstops_internal, _ = tstops_and_saveat_heaps(
+        t0, tf, (tstops..., d_discontinuities...), ()
     )
 
     level_cache = init_cache(
@@ -1228,7 +1317,7 @@ function _build_child(
         child_solution_indices,
         child_synchronizers,
         split_integrator_options(config.values),
-        one(tType),
+        sign(dt),  # dt was signed by signed_dt_tree, so its sign is the direction
     )
 
     return sub
@@ -1307,7 +1396,7 @@ SciMLBase.pop_tstop!(i::AnySplitIntegrator) = pop!(i.tstops)
 
 DiffEqBase.get_dt(i::AnySplitIntegrator) = i.dt
 function set_dt!(i::DEIntegrator, dt)
-    dt <= zero(dt) && error("dt must be positive")
+    iszero(dt) && error("dt must be nonzero")
     return i.dt = dt
 end
 

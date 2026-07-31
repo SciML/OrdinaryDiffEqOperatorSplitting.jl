@@ -24,7 +24,13 @@ run_qa(
                 :fix_dt_at_bounds!, :handle_tstop!, :increment_accept!,                  # OrdinaryDiffEqCore
                 :increment_reject!, :initialize_d_discontinuities, :initialize_saveat,   # OrdinaryDiffEqCore
                 :initialize_tstops, :timedepentdtmin, :IController,                      # OrdinaryDiffEqCore
-                :failfactor_default,                                                     # OrdinaryDiffEqCore
+                # Controller-cache protocol names. Several are `public` only in newer
+                # OrdinaryDiffEqCore (e.g. post_newton_controller! from 4.7); keep them
+                # all ignored so QA stays valid across the whole [compat] range even
+                # though the pinned QA manifest resolves a newer version.
+                :setup_controller_cache, :reinit_controller!, :post_newton_controller!,  # OrdinaryDiffEqCore
+                :get_EEst, :set_EEst!, :get_current_adaptive_order,                      # OrdinaryDiffEqCore
+                :gamma_default, :failfactor_default, :AbstractControllerCache,           # OrdinaryDiffEqCore
                 :promote_tspan,                                                          # SciMLBase
                 # Broadcast extension points a TreeOption implements (src/config_tree.jl).
                 :Broadcasted, :broadcastable, :dotview, :materialize!,                   # Base
@@ -33,6 +39,9 @@ run_qa(
         all_explicit_imports_are_public = (;
             ignore = (
                 :isdtchangeable,                                                        # OrdinaryDiffEqCore
+                # Public only in newer OrdinaryDiffEqCore; see the note above.
+                :stepsize_controller!, :step_accept_controller!,                        # OrdinaryDiffEqCore
+                :step_reject_controller!, :accept_step_controller,                      # OrdinaryDiffEqCore
             ),
         ),
     ),

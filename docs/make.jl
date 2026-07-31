@@ -31,6 +31,7 @@ makedocs(
         "Home" => "index.md",
         "usage/index.md",
         "Theory Manual" => "topics/time-integration.md",
+        "Adaptive time stepping" => "topics/adaptivity.md",
         "api-reference/index.md",
         "devdocs/index.md",
         "references.md",

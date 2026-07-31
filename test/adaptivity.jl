@@ -1,4 +1,5 @@
 using OrdinaryDiffEqOperatorSplitting
+import OrdinaryDiffEqOperatorSplitting as OS
 using Test
 
 import DiffEqBase: DiffEqBase, ODEFunction
@@ -50,6 +51,14 @@ PPLTG = PalindromicPairLieTrotterGodunov
         @test integ.u ≈ u_expected
         @test integ.EEst ≈ EEst_expected
         @test integ.t ≈ dt
+
+        # The accepted step drives the I controller with exponent
+        # 1/(alg_adaptive_order + 1) = 1/2 and gamma = 9/10; the first accepted step
+        # may grow by up to qmax_first_step = 10^4. The rtol absorbs the fastpower
+        # approximation upstream while still discriminating a wrong exponent (~10%).
+        q_expected = clamp(sqrt(EEst_expected) / (9 / 10), 1 / 10^4, 5)
+        @test integ.dt ≈ dt / q_expected rtol = 1.0e-3
+        @test integ.dtcache ≈ dt / q_expected rtol = 1.0e-3
     end
 
     @testset "Error estimate scales with dt²" begin
@@ -142,6 +151,50 @@ PPLTG = PalindromicPairLieTrotterGodunov
         @test issorted(collect(r.err for r in results); rev = true)
     end
 
+    @testset "Loose inner tolerances choke the estimator (documented)" begin
+        # docs/src/topics/adaptivity.md: the pair difference contains the inner
+        # solver error, which for sub-problems with fast internal dynamics tracks
+        # the *inner tolerance* rather than the splitting dt. Inner tolerances
+        # looser than the splitting tolerances then put a dt-independent floor
+        # into EEst and the controller shrinks dt until DtLessThanMin. The fast
+        # dynamics matter: on a slow smooth problem a high-order leaf undershoots
+        # a loose tolerance by orders of magnitude and no floor appears.
+        odeAslow(du, u, p, t) = (du[1] = -u[1]; du[2] = -1.01 * u[2]; nothing)
+        odeBfast(du, u, p, t) = (du[1] = 1000.0 * u[2]; du[2] = -1000.0 * u[1]; nothing)
+        f_fast = GenericSplitFunction(
+            (ODEFunction(odeAslow), ODEFunction(odeBfast)), (dofs, dofs)
+        )
+        prob_fast = OperatorSplittingProblem(f_fast, copy(u0), tspan)
+        trueu_fast = exp([-1.0 1000.0; -1000.0 -1.01]) * u0
+
+        function solve_with_leaf_tols(atol_leaf, rtol_leaf; kwargs...)
+            abstol = TreeOption(f_fast, 1.0e-6)  # splitting node target
+            reltol = TreeOption(f_fast, 1.0e-4)
+            abstol[1] = atol_leaf
+            abstol[2] = atol_leaf
+            reltol[1] = rtol_leaf
+            reltol[2] = rtol_leaf
+            dtmin = TreeOption(f_fast, 0.0)
+            dtmin[] = 1.0e-3                     # splitting node only!
+            integ = DiffEqBase.init(
+                prob_fast, PPLTG((Tsit5(), Tsit5()));
+                dt = 0.1, abstol, reltol, dtmin, verbose = false, kwargs...
+            )
+            DiffEqBase.solve!(integ)
+            return integ
+        end
+
+        # Leaves 100x looser than the splitting tolerances: EEst floor, abort.
+        choked = solve_with_leaf_tols(1.0e-4, 1.0e-2)
+        @test choked.sol.retcode == ReturnCode.DtLessThanMin
+
+        # Same splitting tolerances and dtmin, leaves 10^4x tighter: fine.
+        # (Global error ~ splitting reltol accumulated over the ~60 steps.)
+        healthy = solve_with_leaf_tols(1.0e-10, 1.0e-8)
+        @test healthy.sol.retcode == ReturnCode.Success
+        @test maximum(abs, healthy.u .- trueu_fast) < 5.0e-3
+    end
+
     @testset "Unreachable tolerances abort with DtLessThanMin" begin
         integ = DiffEqBase.init(
             prob, PPLTG((Tsit5(), Tsit5()));
@@ -165,6 +218,45 @@ PPLTG = PalindromicPairLieTrotterGodunov
         @test isnan(integ.EEst)
     end
 
+    @testset "reject_step! restores the whole subtree, including leaf u" begin
+        # StrangMarchuk skips the forward sync of its first child on a retry
+        # (`next_sync_is_continuous`), so the rollback itself has to restore leaf
+        # states -- rewinding only the clocks would silently resume the retry from
+        # the failed attempt's state.
+        integ = DiffEqBase.init(prob, StrangMarchuk((Euler(), Euler())); dt = 0.05)
+        DiffEqBase.step!(integ)
+        for child in integ.child_subintegrators
+            child.u .+= 1.0 # pollute, as if a failed attempt had advanced the child
+            child.t += 0.5
+        end
+        OS.reject_step!(integ)
+        @test integ.u == integ.uprev
+        for child in integ.child_subintegrators
+            @test child.u == integ.u[dofs]
+            @test child.t == integ.t
+            @test child.tprev == integ.t
+        end
+    end
+
+    @testset "Per-node adaptive defaults" begin
+        # Without an `adaptive` keyword every node adapts exactly if its own
+        # algorithm can: the splitting node stays fixed-step while a Tsit5 leaf
+        # adapts and an Euler leaf does not.
+        integ = DiffEqBase.init(prob, LieTrotterGodunov((Tsit5(), Euler())); dt = 0.1)
+        @test integ.opts.adaptive == false
+        @test integ.controller_cache === nothing
+        @test integ.child_subintegrators[1].opts.adaptive == true
+        @test integ.child_subintegrators[2].opts.adaptive == false
+    end
+
+    @testset "discontinuity_detection is refused up front" begin
+        @test_throws ArgumentError DiffEqBase.init(
+            prob, PPLTG((Tsit5(), Tsit5()));
+            dt = 0.1,
+            controller = OrdinaryDiffEqCore.IController(discontinuity_detection = true)
+        )
+    end
+
     @testset "Adaptive root with a nested non-adaptive splitting node" begin
         # B split once more into two identical halves handled by an inner LTG node.
         # The inner node stays non-adaptive by default, and a rejection at the root
@@ -182,6 +274,25 @@ PPLTG = PalindromicPairLieTrotterGodunov
         )
         @test integ.controller_cache !== nothing
         @test integ.child_subintegrators[2].controller_cache === nothing
+        DiffEqBase.solve!(integ)
+        @test integ.sol.retcode == ReturnCode.Success
+        @test integ.stats.nreject ≥ 1
+        @test maximum(abs, integ.u .- trueu) < 1.0e-3
+    end
+
+    @testset "Three-operator PPLTG adapts" begin
+        # A plus the strictly upper and lower triangles of B: pairwise non-commuting,
+        # so the N-ary pair difference measures a genuine splitting error.
+        odeB1(du, u, p, t) = (du[1] = 0.5 * u[2]; du[2] = 0.0; nothing)
+        odeB2(du, u, p, t) = (du[1] = 0.0; du[2] = 0.5 * u[1]; nothing)
+        fsplit3 = GenericSplitFunction(
+            (fA, ODEFunction(odeB1), ODEFunction(odeB2)), (dofs, dofs, dofs)
+        )
+        prob3 = OperatorSplittingProblem(fsplit3, u0, tspan)
+        integ = DiffEqBase.init(
+            prob3, PPLTG((Tsit5(), Tsit5(), Tsit5()));
+            dt = 0.5, reltol = 1.0e-6, abstol = 1.0e-8
+        )
         DiffEqBase.solve!(integ)
         @test integ.sol.retcode == ReturnCode.Success
         @test integ.stats.nreject ≥ 1
