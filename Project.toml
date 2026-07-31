@@ -19,7 +19,7 @@ Unrolled = "9602ed7d-8fef-5bc8-8597-8f21381861e8"
 [compat]
 BinaryHeaps = "1.0.0"
 CommonSolve = "0.2.4"
-DiffEqBase = "6.165.1, 7"
+DiffEqBase = "7.5"
 ModelingToolkit = "11"
 OrdinaryDiffEqCore = "4.4"
 OrdinaryDiffEqLowOrderRK = "1.7, 2"
