@@ -27,6 +27,15 @@ else
 end
 _inner_verbose(verbose) = verbose
 
+# `verbose` reaches us either as a Bool or, through DiffEqBase v7's `init`, as a
+# DEVerbosity whose first type parameter is the on/off flag. Neither can be used in
+# a boolean context directly.
+_is_verbose(verbose::Bool) = verbose
+_is_verbose(verbose) = true
+@static if isdefined(DiffEqBase, :DEVerbosity)
+    _is_verbose(::DiffEqBase.DEVerbosity{B}) where {B} = B
+end
+
 abstract type AbstractOperatorSplitFunction <: SciMLBase.AbstractODEFunction{true} end
 abstract type AbstractOperatorSplittingAlgorithm end
 abstract type AbstractOperatorSplittingCache end
@@ -35,12 +44,14 @@ abstract type AbstractOperatorSplittingCache end
 @inline isdtchangeable(alg::AbstractOperatorSplittingAlgorithm) = all(isdtchangeable.(alg.inner_algs))
 
 include("function.jl")
+include("config_tree.jl")
 include("problem.jl")
 include("integrator.jl")
 include("solver.jl")
 include("utils.jl")
 
 export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov, StrangMarchuk
+export SplitNode, TreeOption
 
 include("precompilation.jl")
 

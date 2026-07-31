@@ -143,6 +143,7 @@ mutable struct OperatorSplittingIntegrator{
         childSyncType,
         controllerType,
         optionsType,
+        configType,
     } <: SciMLBase.AbstractODEIntegrator{algType, true, uType, tType}
     const f::fType
     const alg::algType
@@ -178,6 +179,8 @@ mutable struct OperatorSplittingIntegrator{
     stats::IntegratorStats
     tdir::tType
     next_sync_is_continuous::Bool
+    # Per-node settings, kept so that `reinit!` can restore them.
+    config::configType
 end
 
 is_next_sync_continuous(integrator) = false
@@ -188,6 +191,18 @@ reset_next_sync_continuous(integrator) = nothing
 reset_next_sync_continuous(integrator::OperatorSplittingIntegrator) = integrator.next_sync_is_continuous = false
 
 const AnySplitIntegrator = Union{SplitSubIntegrator, OperatorSplittingIntegrator}
+
+# DiffEqBase promotes the problem's `tspan` against the `dt` keyword before `__init`
+# is ever called. A TreeOption is not a number, so hand it the root value: the step
+# size the outermost integrator runs with.
+function SciMLBase.promote_tspan(u0, p, tspan, prob::OperatorSplittingProblem, kwargs)
+    dt = get(kwargs, :dt, nothing)
+    dt === nothing && return tspan
+    tspan1, tspan2, _ = promote(tspan..., _root_value(dt))
+    return (tspan1, tspan2)
+end
+_root_value(opt::TreeOption) = opt.value
+_root_value(v) = v
 
 # ---------------------------------------------------------------------------
 # __init
@@ -213,13 +228,17 @@ function SciMLBase.__init(
     (; u0, p) = prob
     t0, tf = prob.tspan
 
-    dt > zero(dt) || error("dt must be positive")
-    dtcache = dt
-    dt = tf > t0 ? dt : -dt
-    tType = typeof(dt)
+    # Every setting is either one value for the whole tree or a TreeOption carrying a
+    # value per node. Beyond the four this integrator handles itself, whatever the
+    # caller passes travels down to the leaf integrators.
+    config = build_config_tree(prob.f, (; dt, adaptive, verbose, controller, kwargs...))
+    validate_dt_tree(config)
+    tType = typeof(config.values.dt)
+    config = signed_dt_tree(config, tf > t0 ? one(tType) : -one(tType), tType)
+    warn_non_adaptive(alg, config)
 
-    (!isadaptive(alg) && adaptive && verbose) &&
-        @warn("The algorithm $alg is not adaptive.")
+    dt = config.values.dt
+    dtcache = abs(dt)
 
     dtchangeable = isdtchangeable(alg)
 
@@ -251,9 +270,9 @@ function SciMLBase.__init(
         uprev, u,
         u,            # u_master == u at the outermost level
         1:length(u),
-        t0, dt, tf,
+        t0, tf,
         tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose
+        config
     )
 
     cache = init_cache(
@@ -282,11 +301,12 @@ function SciMLBase.__init(
         child_solution_indices,
         child_synchronizers,
         0,
-        controller,
-        IntegratorOptions(; verbose, adaptive),
+        config.values.controller,
+        split_integrator_options(config.values),
         IntegratorStats(),
         tType(tstops_internal.ordering isa BinaryHeaps.FasterForward ? 1 : -1),
         false,
+        config,
     )
     DiffEqBase.initialize!(callback, u0, t0, integrator)
     return integrator
@@ -302,21 +322,27 @@ function DiffEqBase.reinit!(
         u0 = integrator.sol.prob.u0;
         t0 = integrator.sol.prob.tspan[1],
         tf = integrator.sol.prob.tspan[2],
-        dt = isadaptive(integrator) ? nothing : integrator.dtcache,
+        dt = nothing,
         erase_sol = false,
         tstops = integrator._tstops,
         saveat = integrator._saveat,
         reinit_callbacks = true,
         reinit_retcode = true
     )
+    # Without a `dt` every node is restored to the step size it was configured with,
+    # so a multi-rate setup survives a reinit!. Passing one is equivalent to passing
+    # it to `init`: a scalar reconfigures the whole tree, a TreeOption node by node.
+    if dt !== nothing
+        integrator.config = _reconfigure_dt(integrator, dt, t0, tf)
+    end
+    config = integrator.config
+
     integrator.u .= u0
     integrator.uprev .= u0
     integrator.t = t0
     integrator.tprev = t0
-    if dt !== nothing
-        integrator.dt = dt
-        integrator.dtcache = dt
-    end
+    integrator.dt = config.values.dt
+    integrator.dtcache = abs(config.values.dt)
     integrator.tstops, integrator.saveat =
         tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     integrator.iter = 0
@@ -339,13 +365,31 @@ function DiffEqBase.reinit!(
     _subreinit_tuple!(
         integrator.f,
         u0,
-        integrator.child_subintegrators;
-        t0, tf, dt,
+        integrator.child_subintegrators,
+        config;
+        t0, tf,
         erase_sol, tstops, saveat,
         reinit_callbacks, reinit_retcode
     )
     return nothing
 end
+
+# Rebuild the step sizes of the stored configuration from a `dt` given to reinit!.
+function _reconfigure_dt(integrator::OperatorSplittingIntegrator, dt, t0, tf)
+    tType = typeof(integrator.dt)
+    dt_config = build_config_tree(integrator.f, (; dt))
+    validate_dt_tree(dt_config)
+    dt_config = signed_dt_tree(dt_config, tf > t0 ? one(tType) : -one(tType), tType)
+    return _replace_dt(integrator.config, dt_config)
+end
+
+_replace_dt(config::ConfigTree, dt_config::ConfigTree) = ConfigTree(
+    merge(config.values, (; dt = dt_config.values.dt)),
+    ntuple(
+        i -> _replace_dt(config.children[i], dt_config.children[i]),
+        length(config.children)
+    )
+)
 
 # --- subreinit! helpers ---
 
@@ -353,12 +397,13 @@ end
 @unroll function _subreinit_tuple!(
         f,
         u0,
-        children::Tuple;
+        children::Tuple,
+        config::ConfigTree;
         kwargs...
     )
     i = 1
     @unroll for child in children
-        _subreinit_child!(get_operator(f, i), u0, child; kwargs...)
+        _subreinit_child!(get_operator(f, i), u0, child, config.children[i]; kwargs...)
         i += 1
     end
 end
@@ -367,14 +412,14 @@ end
 function _subreinit_child!(
         f_child,
         u0,
-        child::DEIntegrator;
-        dt,
+        child::DEIntegrator,
+        config::ConfigTree;
         kwargs...
     )
-    if dt !== nothing && child.dtchangeable
-        SciMLBase.set_proposed_dt!(child, dt)
+    if child.dtchangeable
+        SciMLBase.set_proposed_dt!(child, config.values.dt)
         # Reinit does not touch this, so we reset it manually.
-        set_dt!(child, dt)
+        set_dt!(child, config.values.dt)
     end
     DiffEqBase.reinit!(child; kwargs...)
     return nothing
@@ -384,17 +429,15 @@ end
 function _subreinit_child!(
         f_child,
         u0,
-        sub::SplitSubIntegrator;
+        sub::SplitSubIntegrator,
+        config::ConfigTree;
         t0,
         tf,
-        dt,
         kwargs...
     )
     sub.t = t0
-    if dt !== nothing
-        SciMLBase.set_proposed_dt!(sub, dt)
-        set_dt!(sub, dt)
-    end
+    SciMLBase.set_proposed_dt!(sub, config.values.dt)
+    set_dt!(sub, config.values.dt)
     sub.iter = 0
     sub.force_stepfail = false
     sub.last_step_failed = false
@@ -407,8 +450,9 @@ function _subreinit_child!(
     _subreinit_tuple!(
         f_child,
         u0,
-        sub.child_subintegrators;
-        t0, tf, dt, kwargs...
+        sub.child_subintegrators,
+        config;
+        t0, tf, kwargs...
     )
     return nothing
 end
@@ -735,7 +779,7 @@ function SciMLBase.check_error(integrator::OperatorSplittingIntegrator)
         return integrator.sol.retcode
     end
     if DiffEqBase.NAN_CHECK(integrator.dtcache) || DiffEqBase.NAN_CHECK(integrator.dt)
-        integrator.opts.verbose &&
+        _is_verbose(integrator.opts.verbose) &&
             @warn("NaN dt detected. Likely a NaN value in the state, parameters, or derivative value caused this outcome.")
         return ReturnCode.DtNaN
     end
@@ -748,7 +792,7 @@ function SciMLBase.check_error(integrator::SplitSubIntegrator)
         return integrator.status.retcode
     end
     if DiffEqBase.NAN_CHECK(integrator.dtcache) || DiffEqBase.NAN_CHECK(integrator.dt)
-        integrator.opts.verbose &&
+        _is_verbose(integrator.opts.verbose) &&
             @warn("NaN dt detected. Likely a NaN value in the state, parameters, or derivative value caused this outcome.")
         return ReturnCode.DtNaN
     end
@@ -952,9 +996,9 @@ function build_subintegrators(
         uouter::AbstractVector,
         u_master::AbstractVector,
         solution_indices,
-        t0, dt, tf,
+        t0, tf,
         tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose
+        config::ConfigTree
     )
     (; f, p) = prob
 
@@ -966,9 +1010,9 @@ function build_subintegrators(
             p[i],
             uprevouter, uouter, u_master,
             f.solution_indices[i],
-            t0, dt, tf,
+            t0, tf,
             tstops, saveat, d_discontinuities, callback,
-            adaptive, verbose
+            config.children[i]
         ),
         length(f.functions)
     )
@@ -987,12 +1031,11 @@ function _build_child(
         uouter::AbstractVector,
         u_master::AbstractVector,
         solution_indices,
-        t0, dt, tf,
+        t0, tf,
         tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose,
-        save_end = false,
-        controller = nothing
+        config::ConfigTree
     )
+    dt = config.values.dt
     tType = typeof(dt)
 
     # Recurse: build each consecutive child
@@ -1004,9 +1047,9 @@ function _build_child(
             p[i],
             uprevouter, uouter, u_master,
             f.solution_indices[i],
-            t0, dt, tf,
+            t0, tf,
             tstops, saveat, d_discontinuities, callback,
-            adaptive, verbose
+            config.children[i]
         ),
         length(f.functions)
     )
@@ -1038,7 +1081,7 @@ function _build_child(
         tstops_internal,
         0,              # iter
         EEst_val,
-        controller,
+        config.values.controller,
         false, false, false,  # force_stepfail, last_step_failed, u_modified
         SplitSubIntegratorStatus(),
         IntegratorStats(),
@@ -1047,7 +1090,7 @@ function _build_child(
         solution_indices,
         child_solution_indices,
         child_synchronizers,
-        IntegratorOptions(; verbose, adaptive),
+        split_integrator_options(config.values),
         one(tType),
     )
 
@@ -1063,11 +1106,9 @@ function _build_child(
         uprevouter::S, uouter::S,
         u_master::S,
         solution_indices,
-        t0::T, dt::T, tf::T,
+        t0::T, tf::T,
         tstops, saveat, d_discontinuities, callback,
-        adaptive, verbose,
-        save_end = false,
-        controller = nothing
+        config::ConfigTree
     ) where {S, T, P, F}
     u = uouter[solution_indices]
     u0 = if f isa SciMLBase.AbstractSciMLFunction
@@ -1084,17 +1125,39 @@ function _build_child(
 
     integrator = SciMLBase.__init(
         prob2, alg;
-        dt,
+        dt = config.values.dt,
         tstops,
         saveat = (),
         d_discontinuities,
         save_everystep = false,
         advance_to_tstop = false,
-        adaptive, controller,
-        verbose = _inner_verbose(verbose)
+        adaptive = config.values.adaptive,
+        controller = config.values.controller,
+        verbose = _inner_verbose(config.values.verbose),
+        inner_values(config.values)...
     )
     return integrator
 end
+
+# ---------------------------------------------------------------------------
+# Tree addressing
+#
+# Only `SplitNode` addresses are accepted here. SciMLBase already gives
+# `integrator[i]` the meaning "the i-th state component" via symbolic indexing
+# (`Base.getindex(::DEIntegrator, sym)`), so integer indexing is left alone.
+# ---------------------------------------------------------------------------
+function _tree_child(integrator::AnySplitIntegrator, i::Int)
+    children = integrator.child_subintegrators
+    checkbounds(Bool, 1:length(children), i) || throw(
+        ArgumentError(
+            "operator $i is out of range: this splitting node has $(length(children)) subintegrators."
+        )
+    )
+    return children[i]
+end
+
+Base.getindex(integrator::AnySplitIntegrator, node::SplitNode) =
+    _resolve(integrator, node.path)
 
 # ---------------------------------------------------------------------------
 # SciMLBase API

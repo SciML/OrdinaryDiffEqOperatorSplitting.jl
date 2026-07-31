@@ -29,6 +29,9 @@ run_qa(
                 :fix_dt_at_bounds!, :handle_tstop!, :increment_accept!,                  # OrdinaryDiffEqCore
                 :increment_reject!, :initialize_d_discontinuities, :initialize_saveat,   # OrdinaryDiffEqCore
                 :initialize_tstops, :post_newton_controller!, :timedepentdtmin,          # OrdinaryDiffEqCore
+                :promote_tspan,                                                          # SciMLBase
+                # Broadcast extension points a TreeOption implements (src/config_tree.jl).
+                :Broadcasted, :broadcastable, :dotview, :materialize!,                   # Base
             ),
         ),
         all_explicit_imports_are_public = (;

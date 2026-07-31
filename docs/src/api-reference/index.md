@@ -18,3 +18,10 @@ GenericSplitFunction
 LieTrotterGodunov
 StrangMarchuk
 ```
+
+## Per-node configuration
+
+```@docs
+SplitNode
+TreeOption
+```
