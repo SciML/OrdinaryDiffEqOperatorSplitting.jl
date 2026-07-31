@@ -24,6 +24,7 @@ run_qa(
                 :fix_dt_at_bounds!, :handle_tstop!, :increment_accept!,                  # OrdinaryDiffEqCore
                 :increment_reject!, :initialize_d_discontinuities, :initialize_saveat,   # OrdinaryDiffEqCore
                 :initialize_tstops, :timedepentdtmin, :IController,                      # OrdinaryDiffEqCore
+                :failfactor_default,                                                     # OrdinaryDiffEqCore
                 :promote_tspan,                                                          # SciMLBase
                 # Broadcast extension points a TreeOption implements (src/config_tree.jl).
                 :Broadcasted, :broadcastable, :dotview, :materialize!,                   # Base

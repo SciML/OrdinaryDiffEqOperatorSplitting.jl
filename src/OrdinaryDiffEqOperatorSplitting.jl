@@ -15,7 +15,8 @@ import SymbolicIndexingInterface: variable_symbols
 import RecursiveArrayTools
 
 import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isdtchangeable,
-    step_accept_controller!, step_reject_controller!
+    stepsize_controller!, step_accept_controller!, step_reject_controller!,
+    accept_step_controller
 
 # In OrdinaryDiffEq v7 / DiffEqBase v7, passing verbose::Bool to inner ODE
 # integrators is no longer supported. Convert Bool → DEVerbosity when available.

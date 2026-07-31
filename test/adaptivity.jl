@@ -156,7 +156,7 @@ PPLTG = PalindromicPairLieTrotterGodunov
         integ = DiffEqBase.init(
             prob, PPLTG((Euler(), Euler())); dt = 0.05, adaptive = false
         )
-        @test integ.controller === nothing
+        @test integ.controller_cache === nothing
         @test isnan(integ.EEst)
         DiffEqBase.solve!(integ)
         @test integ.sol.retcode == ReturnCode.Success
@@ -180,12 +180,66 @@ PPLTG = PalindromicPairLieTrotterGodunov
         integ = DiffEqBase.init(
             prob_nested, alg_nested; dt = 0.4, reltol = 1.0e-5, abstol = 1.0e-8
         )
-        @test integ.controller !== nothing
-        @test integ.child_subintegrators[2].controller === nothing
+        @test integ.controller_cache !== nothing
+        @test integ.child_subintegrators[2].controller_cache === nothing
         DiffEqBase.solve!(integ)
         @test integ.sol.retcode == ReturnCode.Success
         @test integ.stats.nreject ≥ 1
         @test maximum(abs, integ.u .- trueu) < 1.0e-3
+    end
+
+    @testset "Nested PPLTG: the inner node adapts and rejects on its own" begin
+        # B split into its strictly lower and upper triangle, which do not commute,
+        # handled by an inner adaptive PPLTG. The inner node gets a much tighter
+        # splitting tolerance than the root, so it has to reject and subcycle
+        # within the intervals the root hands it.
+        odeBu(du, u, p, t) = (du[1] = 0.5 * u[2]; du[2] = 0.0; nothing)
+        odeBl(du, u, p, t) = (du[1] = 0.0; du[2] = 0.5 * u[1]; nothing)
+        f_nested = GenericSplitFunction(
+            (fA, GenericSplitFunction((ODEFunction(odeBu), ODEFunction(odeBl)), (dofs, dofs))),
+            (dofs, dofs)
+        )
+        prob_nested = OperatorSplittingProblem(f_nested, u0, tspan)
+        alg_nested = PPLTG((Tsit5(), PPLTG((Tsit5(), Tsit5()))))
+
+        reltol = TreeOption(f_nested, 1.0e-3)
+        reltol[2] = 1.0e-8
+        integ = DiffEqBase.init(
+            prob_nested, alg_nested; dt = 0.5, reltol, abstol = 1.0e-10
+        )
+        sub = integ.child_subintegrators[2]
+        @test sub.controller_cache !== nothing
+        DiffEqBase.solve!(integ)
+        @test integ.sol.retcode == ReturnCode.Success
+        # The inner node ran its own controller: it rejected at least once and
+        # accepted far more (sub-cycled) steps than the root.
+        @test sub.stats.nreject ≥ 1
+        @test sub.stats.naccept > integ.stats.naccept
+        @test sub.EEst ≤ 1
+        @test maximum(abs, integ.u .- trueu) < 1.0e-2
+    end
+
+    @testset "PIController threads its state between steps" begin
+        controller = OrdinaryDiffEqCore.PIController(0.35, 0.2)
+        integ = DiffEqBase.init(
+            prob, PPLTG((Tsit5(), Tsit5()));
+            dt = 0.1, controller, reltol = 1.0e-6, abstol = 1.0e-8
+        )
+        @test integ.controller_cache isa OrdinaryDiffEqCore.PIControllerCache
+        errold0 = integ.controller_cache.errold
+        DiffEqBase.solve!(integ)
+        @test integ.sol.retcode == ReturnCode.Success
+        @test integ.controller_cache.errold != errold0 # the error history was carried
+        @test maximum(abs, integ.u .- trueu) < 1.0e-3
+        ufinal = copy(integ.u)
+        niters = integ.iter
+        # reinit! resets the controller memory, so a rerun is bit-identical.
+        DiffEqBase.reinit!(integ)
+        @test integ.controller_cache.errold == errold0
+        DiffEqBase.solve!(integ)
+        @test integ.sol.retcode == ReturnCode.Success
+        @test integ.u == ufinal
+        @test integ.iter == niters
     end
 
     @testset "Explicitly passed controller is used" begin
@@ -193,7 +247,7 @@ PPLTG = PalindromicPairLieTrotterGodunov
             prob, PPLTG((Tsit5(), Tsit5()));
             dt = 0.1, controller = OrdinaryDiffEqCore.IController()
         )
-        @test integ.controller isa OrdinaryDiffEqCore.IController
+        @test integ.controller_cache isa OrdinaryDiffEqCore.IControllerCache
         DiffEqBase.solve!(integ)
         @test integ.sol.retcode == ReturnCode.Success
     end

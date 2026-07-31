@@ -6,23 +6,19 @@ end
 
 IntegratorStats() = IntegratorStats(0, 0)
 
-Base.@kwdef mutable struct IntegratorOptions{tType, fType, vbType, F3, atolType, rtolType, normType, qType}
+Base.@kwdef mutable struct IntegratorOptions{tType, fType, vbType, F3, atolType, rtolType, normType}
     adaptive::Bool
     dtmin::tType = eps(Float64)
     dtmax::tType = Inf
     failfactor::fType = 4.0
     verbose::vbType = DEFAULT_VERBOSITY
     isoutofdomain::F3 = DiffEqBase.ODE_DEFAULT_ISOUTOFDOMAIN
-    # Error control, used when the node's algorithm provides an error estimate.
+    # Error control, used when the node's algorithm provides an error estimate. The
+    # step size controller knobs (qmin, qmax, gamma, ...) are not held here: they
+    # live in the node's controller cache, resolved by OrdinaryDiffEqCore.
     abstol::atolType = 1.0e-6
     reltol::rtolType = 1.0e-3
     internalnorm::normType = DiffEqBase.ODE_DEFAULT_NORM
-    # Step size controller limits, following the OrdinaryDiffEq conventions.
-    qmin::qType = 0.2
-    qmax::qType = 10.0
-    gamma::qType = 0.9
-    qsteady_min::qType = 1.0
-    qsteady_max::qType = 1.0
 end
 
 
@@ -59,9 +55,12 @@ its children's synchronizers, solution indices, and sub-integrators.  It does
 - `t`, `dt`, `dtcache`     — time tracking
   `dtchangeable`, `stops`
 - `iter`                   — step counter at this level
+- `success_iter`           — accepted-step counter at this level
 - `EEst`                   — error estimate (`NaN` for non-adaptive, `1.0` default
                               for adaptive)
-- `controller`             — step-size controller (or `nothing` for non-adaptive)
+- `controller_cache`       — `OrdinaryDiffEqCore.AbstractControllerCache` holding the
+                              step-size controller and its state (or `nothing` for
+                              non-adaptive)
 - `force_stepfail`         — flag: current step must be retried
 - `last_step_failed`       — flag: previous step failed (double-failure detection)
 - `status`                 — [`SplitSubIntegratorStatus`](@ref) for retcode communication
@@ -98,8 +97,9 @@ mutable struct SplitSubIntegrator{
     const dtchangeable::Bool
     tstops::tstopsType
     iter::Int
+    success_iter::Int
     EEst::EEstType
-    controller::controllerType
+    controller_cache::controllerType
     force_stepfail::Bool
     last_step_failed::Bool
     u_modified::Bool # TODO we can probably remove this
@@ -184,7 +184,9 @@ mutable struct OperatorSplittingIntegrator{
     child_solution_indices::childSolidxType # Tuple
     child_synchronizers::childSyncType      # Tuple
     iter::Int
-    controller::controllerType
+    success_iter::Int
+    # Step-size controller plus its state, or `nothing` when this node is not adaptive.
+    controller_cache::controllerType
     EEst::tType  # error estimate of the last attempted step (NaN when no controller runs)
     opts::optionsType
     stats::IntegratorStats
@@ -299,8 +301,8 @@ function SciMLBase.__init(
     child_solution_indices = ntuple(i -> prob.f.solution_indices[i], length(prob.f.functions))
     child_synchronizers = ntuple(i -> prob.f.synchronizers[i], length(prob.f.functions))
 
-    root_controller = _node_controller(alg, config.values)
-    EEst = root_controller === nothing ? tType(NaN) : one(tType)
+    root_controller_cache = _node_controller_cache(alg, cache, config.values, tType)
+    EEst = root_controller_cache === nothing ? tType(NaN) : one(tType)
 
     integrator = OperatorSplittingIntegrator(
         prob.f,
@@ -319,8 +321,8 @@ function SciMLBase.__init(
         child_subintegrators,
         child_solution_indices,
         child_synchronizers,
-        0,
-        root_controller,
+        0, 0,               # iter, success_iter
+        root_controller_cache,
         EEst,
         split_integrator_options(config.values),
         IntegratorStats(),
@@ -366,8 +368,8 @@ function DiffEqBase.reinit!(
     integrator.tstops, integrator.saveat =
         tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     integrator.iter = 0
-    integrator.EEst = integrator.controller === nothing ?
-        oftype(integrator.EEst, NaN) : one(integrator.EEst)
+    integrator.success_iter = 0
+    reinit_node_controller!(integrator)
     if erase_sol
         resize!(integrator.sol.t, 0)
         resize!(integrator.sol.u, 0)
@@ -461,11 +463,11 @@ function _subreinit_child!(
     SciMLBase.set_proposed_dt!(sub, config.values.dt)
     set_dt!(sub, config.values.dt)
     sub.iter = 0
+    sub.success_iter = 0
     sub.force_stepfail = false
     sub.last_step_failed = false
     sub.status = SplitSubIntegratorStatus(ReturnCode.Default)
-    # Reset EEst to its appropriate default
-    sub.EEst = sub.controller === nothing ? oftype(sub.EEst, NaN) : one(sub.EEst)
+    reinit_node_controller!(sub)
     # Recurse into this node's children
     _subreinit_tuple!(
         f_child,
@@ -529,25 +531,29 @@ end
 
 function should_accept_step(integrator::OperatorSplittingIntegrator)
     (integrator.force_stepfail || integrator.isout) && return false
-    return should_accept_step(integrator, integrator.cache, integrator.controller)
+    return should_accept_step(integrator, integrator.cache, integrator.controller_cache)
 end
 function should_accept_step(integrator::SplitSubIntegrator)
     integrator.force_stepfail && return false
-    return should_accept_step(integrator, integrator.cache, integrator.controller)
+    return should_accept_step(integrator, integrator.cache, integrator.controller_cache)
 end
 function should_accept_step(integrator::AnySplitIntegrator, cache, ::Nothing)
     return !(integrator.force_stepfail)
 end
 # An active controller additionally requires the error estimate to pass.
-function should_accept_step(integrator::AnySplitIntegrator, cache, controller)
-    return integrator.EEst <= one(integrator.EEst)
+function should_accept_step(
+        integrator::AnySplitIntegrator, cache,
+        controller_cache::OrdinaryDiffEqCore.AbstractControllerCache
+    )
+    return accept_step_controller(integrator, controller_cache, integrator.alg)
 end
 
 function accept_step!(integrator::AnySplitIntegrator)
     OrdinaryDiffEqCore.increment_accept!(integrator.stats)
-    return accept_step!(integrator, integrator.cache, integrator.controller)
+    integrator.success_iter += 1
+    return accept_step!(integrator, integrator.cache, integrator.controller_cache)
 end
-function accept_step!(integrator::AnySplitIntegrator, cache, controller)
+function accept_step!(integrator::AnySplitIntegrator, cache, controller_cache)
     return store_previous_info!(integrator)
 end
 function store_previous_info!(integrator::AnySplitIntegrator)
@@ -701,9 +707,10 @@ function step_footer!(integrator::AnySplitIntegrator)
         validate_time_point(integrator)
     elseif integrator.force_stepfail
         # A failed inner solve tells us nothing about the error, so back off by the
-        # failfactor instead of consulting the controller.
-        if isadaptive(integrator)
-            _propose_dt!(integrator, integrator.dt / integrator.opts.failfactor)
+        # failfactor instead of consulting the step-size law.
+        if integrator.controller_cache !== nothing
+            OrdinaryDiffEqCore.post_newton_controller!(integrator, integrator.alg)
+            integrator.dtcache = abs(integrator.dt)
             abort_below_dtmin!(integrator)
         elseif integrator.dtchangeable
             integrator.dt /= integrator.opts.failfactor
@@ -885,22 +892,58 @@ end
 #
 # A splitting node runs a controller only if it is adaptive and its algorithm
 # provides an error estimate (written to the node's `EEst` by `_perform_step!`);
-# its `controller` is `nothing` otherwise. Following the OrdinaryDiffEq
-# conventions the step is accepted if `EEst <= 1`.
+# its `controller_cache` is `nothing` otherwise. The controllers themselves are
+# the OrdinaryDiffEqCore ones: `setup_controller_cache` resolves a controller's
+# knobs against this algorithm and mints the mutable per-solve state that
+# `stepsize_controller!`/`step_accept_controller!`/`step_reject_controller!`
+# thread between the steps (e.g. `errold` of a PIController). Following the
+# OrdinaryDiffEq conventions the step is accepted if `EEst <= 1`.
 # ---------------------------------------------------------------------------
 
+const CONTROLLER_KNOB_KEYS = (:qmin, :qmax, :gamma, :qsteady_min, :qsteady_max, :failfactor)
+
 """
-    default_controller(alg::AbstractOperatorSplittingAlgorithm)
+    default_controller(alg::AbstractOperatorSplittingAlgorithm, values::NamedTuple)
 
 The step size controller an adaptive splitting node runs with when `init` is not
-given an explicit `controller`.
+given an explicit `controller`. The controller knobs the caller passed to `init`
+(`qmin`, `qmax`, `gamma`, `qsteady_min`, `qsteady_max`, `failfactor`) ride along
+as overrides; unset ones resolve to the algorithm defaults in
+`setup_controller_cache`.
 """
-default_controller(::AbstractOperatorSplittingAlgorithm) = OrdinaryDiffEqCore.IController()
+default_controller(::AbstractOperatorSplittingAlgorithm, values::NamedTuple) =
+    OrdinaryDiffEqCore.IController(
+    NamedTuple{filter(in(CONTROLLER_KNOB_KEYS), keys(values))}(values)
+)
 
 function _node_controller(alg::AbstractOperatorSplittingAlgorithm, values::NamedTuple)
     (values.adaptive && SciMLBase.isadaptive(alg)) || return nothing
     values.controller === nothing || return values.controller
-    return default_controller(alg)
+    return default_controller(alg, values)
+end
+
+function _node_controller_cache(
+        alg::AbstractOperatorSplittingAlgorithm, level_cache,
+        values::NamedTuple, ::Type{tType}
+    ) where {tType}
+    controller = _node_controller(alg, values)
+    controller === nothing && return nothing
+    return OrdinaryDiffEqCore.setup_controller_cache(alg, level_cache, controller, tType)
+end
+
+reinit_node_controller!(integrator::AnySplitIntegrator) =
+    reinit_node_controller!(integrator, integrator.controller_cache)
+function reinit_node_controller!(integrator::AnySplitIntegrator, ::Nothing)
+    integrator.EEst = oftype(integrator.EEst, NaN)
+    return nothing
+end
+function reinit_node_controller!(
+        integrator::AnySplitIntegrator,
+        controller_cache::OrdinaryDiffEqCore.AbstractControllerCache
+    )
+    integrator.EEst = one(integrator.EEst)
+    OrdinaryDiffEqCore.reinit_controller!(integrator, controller_cache)
+    return nothing
 end
 
 """
@@ -911,41 +954,43 @@ algorithm with `SciMLBase.isadaptive(alg) == true` has to implement this.
 """
 function alg_adaptive_order end
 
-_controller_expo(alg) = 1 / (alg_adaptive_order(alg) + 1)
+# The controller caches consume the error estimate and the estimator order through
+# these OrdinaryDiffEqCore hooks. Our nodes keep `EEst` on the integrator itself.
+@inline OrdinaryDiffEqCore.get_EEst(integrator::AnySplitIntegrator) = integrator.EEst
+@inline OrdinaryDiffEqCore.set_EEst!(integrator::AnySplitIntegrator, val) =
+    integrator.EEst = oftype(integrator.EEst, val)
+OrdinaryDiffEqCore.get_current_adaptive_order(
+    alg::AbstractOperatorSplittingAlgorithm, cache
+) = alg_adaptive_order(alg)
+# The generic fallbacks of these two are meant for inner solvers with their own
+# tuning (gamma_default falls back to 0, which would ruin the step size law).
+OrdinaryDiffEqCore.gamma_default(::AbstractOperatorSplittingAlgorithm) = 9 // 10
+OrdinaryDiffEqCore.failfactor_default(::AbstractOperatorSplittingAlgorithm) = 4
 
 @inline step_accept_controller!(integrator::AnySplitIntegrator) =
-    step_accept_controller!(integrator, integrator.controller)
+    step_accept_controller!(integrator, integrator.controller_cache)
 step_accept_controller!(integrator::AnySplitIntegrator, ::Nothing) = nothing
 function step_accept_controller!(
-        integrator::AnySplitIntegrator, controller::OrdinaryDiffEqCore.IController
+        integrator::AnySplitIntegrator,
+        controller_cache::OrdinaryDiffEqCore.AbstractControllerCache
     )
-    (; qmin, qmax, gamma, qsteady_min, qsteady_max) = integrator.opts
-    EEst = integrator.EEst
-    q = if iszero(EEst)
-        inv(qmax)
-    else
-        clamp(EEst^_controller_expo(integrator.alg) / gamma, inv(qmax), inv(qmin))
-    end
-    qsteady_min <= q <= qsteady_max && (q = one(q))
-    _propose_dt!(integrator, integrator.dt / q)
+    q = stepsize_controller!(integrator, controller_cache, integrator.alg)
+    dtnew = step_accept_controller!(integrator, controller_cache, integrator.alg, q)
+    integrator.dt = dtnew
+    integrator.dtcache = abs(dtnew)
     return nothing
 end
 
 @inline step_reject_controller!(integrator::AnySplitIntegrator) =
-    step_reject_controller!(integrator, integrator.controller)
+    step_reject_controller!(integrator, integrator.controller_cache)
 step_reject_controller!(integrator::AnySplitIntegrator, ::Nothing) = nothing
 function step_reject_controller!(
-        integrator::AnySplitIntegrator, controller::OrdinaryDiffEqCore.IController
+        integrator::AnySplitIntegrator,
+        controller_cache::OrdinaryDiffEqCore.AbstractControllerCache
     )
-    (; qmin, gamma) = integrator.opts
-    q11 = integrator.EEst^_controller_expo(integrator.alg)
-    _propose_dt!(integrator, integrator.dt / min(inv(qmin), q11 / gamma))
-    return nothing
-end
-
-function _propose_dt!(integrator::AnySplitIntegrator, dtnew)
-    integrator.dt = dtnew
-    integrator.dtcache = abs(dtnew)
+    stepsize_controller!(integrator, controller_cache, integrator.alg)
+    step_reject_controller!(integrator, controller_cache, integrator.alg) # sets dt
+    integrator.dtcache = abs(integrator.dt)
     return nothing
 end
 
@@ -1160,8 +1205,8 @@ function _build_child(
         uprev = uprev_sub, u = u_sub,
     )
 
-    controller = _node_controller(alg, config.values)
-    EEst_val = controller === nothing ? tType(NaN) : one(tType)
+    controller_cache = _node_controller_cache(alg, level_cache, config.values, tType)
+    EEst_val = controller_cache === nothing ? tType(NaN) : one(tType)
 
     sub = SplitSubIntegrator(
         alg,
@@ -1171,9 +1216,9 @@ function _build_child(
         t0, t0, dt, dt,     # t, tprev, dt, dtcache
         isdtchangeable(alg),
         tstops_internal,
-        0,              # iter
+        0, 0,           # iter, success_iter
         EEst_val,
-        controller,
+        controller_cache,
         false, false, false,  # force_stepfail, last_step_failed, u_modified
         SplitSubIntegratorStatus(),
         IntegratorStats(),

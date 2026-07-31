@@ -188,7 +188,7 @@ _sub2_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
             prob, tstepper, dt = dt, verbose = true, alias_u0 = false
         )
         @test integrator.opts.adaptive
-        @test integrator.controller !== nothing
+        @test integrator.controller_cache !== nothing
         @test integrator.sol.retcode == DiffEqBase.ReturnCode.Default
         DiffEqBase.solve!(integrator)
         @test integrator.sol.retcode == DiffEqBase.ReturnCode.Success

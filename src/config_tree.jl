@@ -417,11 +417,13 @@ const NODE_OPTION_KEYS = (:dt, :adaptive, :verbose, :controller)
 inner_values(values::NamedTuple) =
     NamedTuple{filter(!in(NODE_OPTION_KEYS), keys(values))}(values)
 
-# ... of which a splitting node understands these.
+# ... of which a splitting node understands these. The step-size controller knobs
+# (qmin, qmax, gamma, qsteady_min, qsteady_max) are not integrator options: they are
+# folded into the default controller of an adaptive node (`default_controller`) and
+# travel to the leaves like any other inner option.
 const SPLIT_OPTION_KEYS = (
     :dtmin, :dtmax, :failfactor, :isoutofdomain,
     :abstol, :reltol, :internalnorm,
-    :qmin, :qmax, :gamma, :qsteady_min, :qsteady_max,
 )
 
 function split_integrator_options(values::NamedTuple)
