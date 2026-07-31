@@ -1,4 +1,5 @@
 using OrdinaryDiffEqOperatorSplitting
+import OrdinaryDiffEqOperatorSplitting as OS
 using Test
 
 import DiffEqBase: DiffEqBase, ODEFunction
@@ -107,6 +108,29 @@ PPLTG = PalindromicPairLieTrotterGodunov
         @test integ.sol.retcode == ReturnCode.Unstable
         @test ffail.triggered
         @test integ.t < 1.0  # aborted mid-solve, nobody could retry
+    end
+
+    @testset "Rollback clears sticky Newton-style leaf failure flags" begin
+        # SciMLBase's generic check_error re-derives ConvergenceFailure from
+        # `last_stepfail` on non-adaptive leaves even after the retcode is reset,
+        # so the escalation retry has to clear the flag during rollback or it dies
+        # again immediately. An implicit inner solver sets the flag organically on
+        # a Newton failure; it is injected here because the test dependencies are
+        # explicit solvers only.
+        f = GenericSplitFunction((fA, ODEFunction(odeB)), (dofs, dofs))
+        prob = OperatorSplittingProblem(f, copy(u0), (0.0, 1.0))
+        integ = DiffEqBase.init(prob, PPLTG((Tsit5(), Euler())); dt = 0.1, verbose = false)
+        DiffEqBase.step!(integ)
+
+        leaf = integ.child_subintegrators[2]
+        leaf.last_stepfail = true
+        @test SciMLBase.check_error(leaf) == ReturnCode.ConvergenceFailure
+        @test OS._child_failed(leaf)     # the eager detection sees it ...
+
+        OS.reject_step!(integ)           # ... and the retry's rollback clears it
+        @test !leaf.last_stepfail
+        @test !OS._child_failed(leaf)
+        @test SciMLBase.check_error(leaf) == ReturnCode.Success
     end
 
     @testset "Persistent non-adaptive failure exhausts the adaptive root" begin

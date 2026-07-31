@@ -68,8 +68,9 @@ its children's synchronizers, solution indices, and sub-integrators.  It does
                               this level
 - `child_subintegrators`   — tuple of direct children (`SplitSubIntegrator` or
                               `DEIntegrator`)
-- `solution_indices`       — global indices (into parent `u`) **owned by this node**
-- `child_solution_indices` — tuple of per-child global solution indices
+- `solution_indices`       — indices into the *parent's* solution vector **owned by
+                              this node** (indices are parent-relative at every level)
+- `child_solution_indices` — tuple of per-child indices into *this node's* `u`
 - `child_synchronizers`    — tuple of per-child synchronizer objects
 """
 mutable struct SplitSubIntegrator{
@@ -614,6 +615,8 @@ end
 # forever and turn every escalated failure fatal.
 function _reset_child_failure!(child::SplitSubIntegrator)
     _child_failed(child) && (child.status.retcode = ReturnCode.Default)
+    child.last_step_failed = false
+    child.force_stepfail = false
     return nothing
 end
 function _reset_child_failure!(child::DEIntegrator)
@@ -622,6 +625,16 @@ function _reset_child_failure!(child::DEIntegrator)
     # already come back clean while the stored retcode still blocks re-stepping.
     if child.sol.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
         child.sol = SciMLBase.solution_new_retcode(child.sol, ReturnCode.Default)
+    end
+    # Resetting the retcode is not sufficient: SciMLBase's generic check_error
+    # re-derives ConvergenceFailure from a sticky `last_stepfail` on non-adaptive
+    # leaves (e.g. after an inner Newton failure), which would turn the retry the
+    # escalation protocol just set up into an immediate failure again.
+    if hasfield(typeof(child), :last_stepfail)
+        child.last_stepfail = false
+    end
+    if hasfield(typeof(child), :force_stepfail)
+        child.force_stepfail = false
     end
     return nothing
 end
@@ -1263,14 +1276,21 @@ function _build_child(
     dt = config.values.dt
     tType = typeof(dt)
 
-    # Recurse: build each consecutive child
+    u_sub = RecursiveArrayTools.recursivecopy(uouter[solution_indices])
+    uprev_sub = RecursiveArrayTools.recursivecopy(uprevouter[solution_indices])
+
+    # Recurse: build each consecutive child. Solution indices are relative to the
+    # *parent* at every level, so the children have to address this node's buffers,
+    # not the outer ones: a child that wires itself as a view into the handed
+    # buffer (instead of copying, as the stock leaves do) would otherwise alias
+    # the wrong slots of the root vector.
     child_subintegrators = ntuple(
         i -> _build_child(
             prob,
             alg.inner_algs[i],
             get_operator(f, i),
             p[i],
-            uprevouter, uouter, u_master,
+            uprev_sub, u_sub, u_master,
             f.solution_indices[i],
             t0, tf,
             tstops, saveat, d_discontinuities, callback,
@@ -1281,9 +1301,6 @@ function _build_child(
 
     child_solution_indices = ntuple(i -> f.solution_indices[i], length(f.functions))
     child_synchronizers = ntuple(i -> f.synchronizers[i], length(f.functions))
-
-    u_sub = RecursiveArrayTools.recursivecopy(uouter[solution_indices])
-    uprev_sub = RecursiveArrayTools.recursivecopy(uprevouter[solution_indices])
 
     tstops_internal, _ = tstops_and_saveat_heaps(
         t0, tf, (tstops..., d_discontinuities...), ()
