@@ -69,25 +69,38 @@ function forward_sync_subintegrator!(
         reset_next_sync_continuous(parent)
         return nothing
     end
-    forward_sync_internal!(parent.u, child, solution_indices)
+    forward_sync_internal!(parent.u, parent.uprev, child, solution_indices)
     @timeit_debug "external sync" forward_sync_external!(parent, child, sync)
     return nothing
 end
 
-# Shared internal helper: copy master u slice → leaf DEIntegrator u/uprev
-function forward_sync_internal!(u_source, child::DEIntegrator, solution_indices)
-    @views usrc = u_source[solution_indices]
-    @timeit_debug "sync vectors" begin
-        sync_vectors!(child.u, usrc)
-        sync_vectors!(child.uprev, child.u)
-    end
-    # SciMLBase v3 renamed this to `derivative_discontinuity!`; call the
-    # appropriate name based on which SciMLBase is loaded.
+# Tell a leaf integrator that its state was changed from the outside so it discards
+# FSAL information. SciMLBase v3 renamed `u_modified!` → `derivative_discontinuity!`;
+# call the appropriate name based on which SciMLBase is loaded.
+function mark_state_modified!(child::DEIntegrator)
     @static if isdefined(SciMLBase, :derivative_discontinuity!)
         SciMLBase.derivative_discontinuity!(child, true)
     else
         SciMLBase.u_modified!(child, true)
     end
+    return nothing
+end
+
+# Shared internal helper: copy the parent u slice → child DEIntegrator u/uprev.
+# `uprev_parent` is the parent's rollback buffer: the refresh of the child's own
+# rollback anchor must never write through a child `uprev` that aliases it, because
+# that buffer has to survive the whole step untouched (rejection and the palindromic
+# mid-step rewind restore from it). When they alias, the slice already holds the
+# interval start state and no copy is needed.
+function forward_sync_internal!(u_source, uprev_parent, child::DEIntegrator, solution_indices)
+    @views usrc = u_source[solution_indices]
+    @timeit_debug "sync vectors" begin
+        sync_vectors!(child.u, usrc)
+        if need_sync(child.uprev, uprev_parent)
+            sync_vectors!(child.uprev, child.u)
+        end
+    end
+    mark_state_modified!(child)
     return nothing
 end
 
@@ -162,17 +175,11 @@ end
 
 # Time stuff
 function OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator::AnySplitIntegrator)
-    if tdir(integrator) > 0
-        integrator.dt = min(integrator.opts.dtmax, integrator.dt)
-    else
-        integrator.dt = max(integrator.opts.dtmax, integrator.dt)
-    end
-    dtmin = OrdinaryDiffEqCore.timedepentdtmin(integrator)
-    if tdir(integrator) > 0
-        integrator.dt = max(integrator.dt, dtmin)
-    else
-        integrator.dt = min(integrator.dt, dtmin)
-    end
+    # dtmin/dtmax are magnitudes; clamp |dt| and restore the direction. dtmin wins
+    # over dtmax if the two conflict.
+    dtmax = abs(integrator.opts.dtmax)
+    dtmin = abs(OrdinaryDiffEqCore.timedepentdtmin(integrator))
+    integrator.dt = tdir(integrator) * max(min(abs(integrator.dt), dtmax), dtmin)
     return nothing
 end
 
@@ -194,10 +201,15 @@ function validate_time_point(parent, child::DEIntegrator)
 end
 
 # ---------------------------------------------------------------------------
-# _child_failed: check whether a child reported a failure
+# _child_failed: check whether a child failed
+#
+# Leaves are checked through `SciMLBase.check_error`, not their stored retcode:
+# fixed-step leaf integrators complete `step!` with NaN state without flagging it
+# themselves, and the failure has to be caught *before* the surrounding step is
+# accepted so that the escalation protocol can retry from a clean `uprev`.
 # ---------------------------------------------------------------------------
 _child_failed(child::DEIntegrator) =
-    child.sol.retcode ∉ (ReturnCode.Default, ReturnCode.Success)
+    SciMLBase.check_error(child) ∉ (ReturnCode.Default, ReturnCode.Success)
 
 _child_failed(child::SplitSubIntegrator) =
     child.status.retcode ∉ (ReturnCode.Default, ReturnCode.Success)

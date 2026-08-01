@@ -1,6 +1,6 @@
 name = "OrdinaryDiffEqOperatorSplitting"
 uuid = "760fc936-9fa0-4281-9c1a-468957eedc89"
-version = "0.3.6"
+version = "0.4.0"
 authors = ["Dennis Ogiermann <termi-official@users.noreply.github.com> and contributors"]
 
 [deps]
@@ -19,7 +19,7 @@ Unrolled = "9602ed7d-8fef-5bc8-8597-8f21381861e8"
 [compat]
 BinaryHeaps = "1.0.0"
 CommonSolve = "0.2.4"
-DiffEqBase = "6.165.1, 7"
+DiffEqBase = "7.5"
 ModelingToolkit = "11"
 OrdinaryDiffEqCore = "4.4"
 OrdinaryDiffEqLowOrderRK = "1.7, 2"

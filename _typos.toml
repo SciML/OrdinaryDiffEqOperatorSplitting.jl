@@ -3,3 +3,5 @@
 Strang = "Strang"
 # Citation key for Trotter (Tro:1959:psg) used in docstrings
 Tro = "Tro"
+# Splitting variable name
+BA = "BA"

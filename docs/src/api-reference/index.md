@@ -17,6 +17,7 @@ GenericSplitFunction
 ```@docs
 LieTrotterGodunov
 StrangMarchuk
+PalindromicPairLieTrotterGodunov
 ```
 
 ## Per-node configuration
