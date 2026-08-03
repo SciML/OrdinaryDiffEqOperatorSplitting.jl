@@ -31,6 +31,7 @@ run_qa(
                 :setup_controller_cache, :reinit_controller!, :post_newton_controller!,  # OrdinaryDiffEqCore
                 :get_EEst, :set_EEst!, :get_current_adaptive_order,                      # OrdinaryDiffEqCore
                 :gamma_default, :failfactor_default, :AbstractControllerCache,           # OrdinaryDiffEqCore
+                :apply_ith_callback!,                                                    # OrdinaryDiffEqCore
                 :promote_tspan,                                                          # SciMLBase
                 # Shared linear interpolation kernels, reused so that the
                 # integrator's own dense output and `sol(t)` (which goes through

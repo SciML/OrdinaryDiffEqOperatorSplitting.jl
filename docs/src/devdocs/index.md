@@ -144,6 +144,11 @@ sub-problems evaluated over different intervals, and they do not compose into an
 approximation of the split solution. Only the step endpoints, which the outer
 integrator owns, are states of the full split system.
 
+The same structural argument is why saving and callbacks live on the outer integrator
+alone: an inner split is a stage, not a step, so there is no time point at which its
+state is a meaningful approximation of the split solution for a saved point to record
+or for a callback condition to act on.
+
 Two invariants matter when implementing this:
 
   - `Θ` is derived from `integrator.t - integrator.tprev`, **not** from

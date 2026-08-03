@@ -7,22 +7,21 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     tstops = [filter(t -> t0 < t < tf || tf < t < t0, tstops)..., tf]
     tstops = BinaryHeaps.BinaryHeap{FT, ordering}(tstops)
 
-    # `t0` is excluded and `tf` included, matching OrdinaryDiffEqCore's
-    # `initialize_saveat`: the initial point is owned by `save_start` and the final
-    # one by `save_end`, so leaving them in the heap would duplicate them.
+    # Keep `t0 < t <= tf` in tdir-space, as OrdinaryDiffEqCore's `initialize_saveat`
+    # does: the initial point is owned by `save_start` and the final one by
+    # `save_end`, so leaving either in the heap would duplicate it.
     tdir = tf > t0 ? one(FT) : -one(FT)
-    if isnothing(saveat)
-        saveat = FT[]
+    saveat = if isnothing(saveat)
+        FT[]
     elseif saveat isa Number
         saveat > zero(saveat) || error("saveat value must be positive")
+        # The range already satisfies the window, so no filtering is needed: it
+        # starts one step past `t0` and hits `tf` only if the span divides evenly.
         step = tdir * saveat
-        # `tf` is not appended: the range hits it when it divides the span evenly,
-        # and `save_end` owns the final point otherwise.
-        saveat = collect((t0 + step):step:tf)
+        collect((t0 + step):step:tf)
     else
-        saveat = collect(FT, saveat)
+        filter(t -> tdir * t0 < tdir * t <= tdir * tf, collect(FT, saveat))
     end
-    saveat = filter(t -> tdir * t0 < tdir * t <= tdir * tf, saveat)
     saveat = BinaryHeaps.BinaryHeap{FT, ordering}(saveat)
 
     return tstops, saveat
@@ -80,14 +79,9 @@ function forward_sync_subintegrator!(
 end
 
 # Tell a leaf integrator that its state was changed from the outside so it discards
-# FSAL information. SciMLBase v3 renamed `u_modified!` → `derivative_discontinuity!`;
-# call the appropriate name based on which SciMLBase is loaded.
+# FSAL information.
 function mark_state_modified!(child::DEIntegrator)
-    @static if isdefined(SciMLBase, :derivative_discontinuity!)
-        SciMLBase.derivative_discontinuity!(child, true)
-    else
-        SciMLBase.u_modified!(child, true)
-    end
+    SciMLBase.derivative_discontinuity!(child, true)
     return nothing
 end
 

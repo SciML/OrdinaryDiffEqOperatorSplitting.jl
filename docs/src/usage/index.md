@@ -123,11 +123,10 @@ DiffEqCallbacks.jl) work too.
 
 !!! note "Callbacks run on the outer integrator only"
     A condition is evaluated once per **outer** step, after all the operators of
-    that step have been applied. It is never evaluated between two inner splits: a
-    splitting step applies its operators sequentially over staggered subintervals,
-    so the intermediate states are stages and do not approximate the solution of the
-    split system at any time point. There is correspondingly nothing meaningful for
-    a condition to test or an `affect!` to modify at that level.
+    that step have been applied, and never between two inner splits: for the reason
+    given under "Saving and interpolation" above, those intermediate states are
+    stages and approximate the split solution at no time point, so there is nothing
+    meaningful for a condition to test or an `affect!` to modify at that level.
 
     A consequence worth knowing: an `affect!` that modifies `integrator.u` is
     propagated into every subintegrator before the next step, so modifying the state
