@@ -101,9 +101,10 @@ never changes the splitting error.
     sol = solve!(init(prob, alg; dt = 0.1, tstops = [0.25, 0.5], saveat = [0.25, 0.5]))
     ```
 
-    `dense = true` is rejected: with a linear interpolant, `sol(t)` already
-    reproduces the integrator's own dense output from the saved points, so storing
-    per-step interpolation data would buy nothing.
+    `dense = true` is accepted but has no effect: `sol(t)` already reproduces the
+    integrator's own interpolant from the saved points, so there is no per-step
+    interpolation data left to store. Use `save_everystep` or `saveat` to control
+    how finely that interpolant resolves the trajectory.
 
 ## Callbacks and events
 
@@ -115,11 +116,9 @@ cb = ContinuousCallback((u, t, integrator) -> u[1] - 0.5, terminate!)
 sol = solve!(init(prob, alg; dt = 0.1, callback = cb))
 ```
 
-`DiscreteCallback`, `ContinuousCallback`, `VectorContinuousCallback` and
-`CallbackSet` are all supported, along with `save_positions`, `affect_neg!`,
-`rootfind`, `terminate!` and `derivative_discontinuity!`. Because the machinery is
-DiffEqBase's own, callbacks built on top of it (for instance those in
-DiffEqCallbacks.jl) work too.
+The machinery is DiffEqBase's own, so `DiscreteCallback`, `ContinuousCallback`,
+`VectorContinuousCallback`, `CallbackSet` and anything built on top of them (for
+instance DiffEqCallbacks.jl) all behave as they do elsewhere in SciML.
 
 !!! note "Callbacks run on the outer integrator only"
     A condition is evaluated once per **outer** step, after all the operators of

@@ -131,29 +131,19 @@ end
 ```
 
 Both fall back to linear interpolation for any `AbstractOperatorSplittingCache`, so
-implementing them is optional. Note the accuracy consequences: with the linear
-fallback, interpolated output is first order even for a second-order scheme, and
-continuous callback event times are the exact roots of a straight chord across the
-step. Implementing a higher-order interpolant improves saved output *and* event
-location at once.
+implementing them is optional -- but with the fallback, saved output is first order
+even for a second-order scheme, and continuous callback event times are the exact
+roots of a straight chord across the step. One method improves both.
 
-The reason the fallback is only linear is structural rather than incidental. A
-splitting step advances its children sequentially over staggered subintervals, so at
-any time strictly inside the step the children's own interpolants describe different
-sub-problems evaluated over different intervals, and they do not compose into an
+The fallback is linear for a structural reason, and it is the same reason saving and
+callbacks live on the outer integrator alone: a splitting step advances its children
+sequentially over staggered subintervals, so a child's own interpolant describes a
+different sub-problem over a different interval, and they do not compose into an
 approximation of the split solution. Only the step endpoints, which the outer
-integrator owns, are states of the full split system.
+integrator owns, are states of the full split system -- an inner split is a stage,
+not a step.
 
-The same structural argument is why saving and callbacks live on the outer integrator
-alone: an inner split is a stage, not a step, so there is no time point at which its
-state is a meaningful approximation of the split solution for a saved point to record
-or for a callback condition to act on.
-
-Two invariants matter when implementing this:
-
-  - `Θ` is derived from `integrator.t - integrator.tprev`, **not** from
-    `integrator.dt`. Once a step is accepted, `step_accept_controller!` has already
-    replaced `dt` with the step size proposed for the *next* step.
-  - Interpolation must not mutate integrator state. `change_t_via_interpolation!`
-    relies on being able to evaluate the interpolant repeatedly (the callback
-    root-finder does so many times per step) before committing to a time.
+When implementing this, note that `Θ` is derived from
+`integrator.t - integrator.tprev`, **not** from `integrator.dt`: once a step is
+accepted, `step_accept_controller!` has already replaced `dt` with the step size
+proposed for the *next* step.

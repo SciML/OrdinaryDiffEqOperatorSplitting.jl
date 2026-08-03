@@ -54,14 +54,11 @@ exact_crossing(level) = -10 * log(level / 3)
         calls = Ref(0)
         cb = DiscreteCallback((u, t, integrator) -> (calls[] += 1; false), integrator -> nothing)
         DiffEqBase.solve!(DiffEqBase.init(nprob, alg; dt = 0.1, callback = cb))
-        # Ten outer steps, regardless of how many substeps the inner node takes.
-        @test calls[] == 10
+        @test calls[] == 10   # outer steps only, whatever the inner node does
     end
 
     @testset "affect! fires and sees the integrator" begin
         seen = Float64[]
-        # Threshold between grid points, compared with isapprox: see the CallbackSet
-        # testset below for why the nominal grid cannot be trusted exactly.
         cb = DiscreteCallback(
             (u, t, integrator) -> t >= 0.45,
             integrator -> push!(seen, integrator.t)
@@ -97,9 +94,8 @@ exact_crossing(level) = -10 * log(level / 3)
     end
 
     @testset "a modified u reaches the whole subintegrator tree" begin
-        # This is the operator-splitting-specific hazard: every child holds its own
-        # copy of its slice, and the palindromic schemes skip the forward sync of
-        # their first child on the assumption that it still matches the parent.
+        # Every child holds its own copy of its slice, and the palindromic schemes
+        # skip the forward sync of their first child.
         for alg in (
                 ltg(),
                 StrangMarchuk((Euler(), Euler())),
@@ -138,9 +134,8 @@ exact_crossing(level) = -10 * log(level / 3)
     end
 
     @testset "multiple callbacks in a CallbackSet" begin
-        # Thresholds sit between grid points so that ulp drift in the step times
-        # (0.1 * 8 is 0.7999999999999999, not 0.8) cannot flip a condition, and the
-        # recorded times are compared with isapprox for the same reason.
+        # Thresholds sit between grid points, and times are compared with isapprox,
+        # because of ulp drift (0.1 * 8 is 0.7999999999999999, not 0.8).
         early = Float64[]
         late = Float64[]
         cb1 = DiscreteCallback((u, t, integrator) -> t >= 0.35, integrator -> push!(early, integrator.t))
@@ -208,10 +203,10 @@ end
         @test sol.retcode == ReturnCode.Success
     end
 
-    @testset "event time converges with the interpolant" begin
-        # The interpolant is linear, so the located root is second order accurate.
-        # (The step grid moves with dt, so the constant is noisy; a factor-of-four
-        # improvement over a factor-of-four refinement is the honest assertion.)
+    @testset "event time converges under refinement" begin
+        # The located root is at least second order accurate. The step grid moves
+        # with dt, so the constant is noisy: assert only that a factor-of-four
+        # refinement buys a factor of four.
         errs = map((0.1, 0.025)) do dt
             hits = Float64[]
             cb = ContinuousCallback(
@@ -249,8 +244,6 @@ end
         while integrator.t < exact
             DiffEqBase.step!(integrator)
         end
-        # `change_t_via_interpolation!` moved the step back to the event; every child
-        # clock and buffer must have followed.
         @test integrator.t ≈ exact atol = 1.0e-3
         OS.validate_time_point(integrator)
         @test integrator.child_subintegrators[1].u ≈ integrator.u
@@ -290,10 +283,9 @@ end
             (u, t, integrator) -> u[3] - level,
             integrator -> push!(hits, integrator.t)
         )
-        # `dtmax` matters here: this problem is so nearly linear that the controller
-        # otherwise grows the step to span the rest of the tspan in one go, and the
-        # event can only ever be as accurate as the interpolant over the bracketing
-        # step -- which is linear.
+        # `dtmax` matters: this problem is so nearly linear that the controller
+        # otherwise spans the rest of the tspan in one step, and the event is only
+        # as accurate as the (linear) interpolant over the bracketing step.
         sol = DiffEqBase.solve!(
             DiffEqBase.init(
                 prob, PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5()));
@@ -305,36 +297,25 @@ end
         @test sol.retcode == ReturnCode.Success
     end
 
-    @testset "a long adaptive step degrades the event time, not the bracket" begin
-        # Documented consequence of the linear interpolant: the located event is the
-        # exact root of the interpolant over whatever step brackets it. Pin that
-        # relationship so the behaviour is a stated property rather than a surprise.
-        bracket = Ref((0.0, 0.0))
-        hits = Float64[]
-        cb = ContinuousCallback(
-            (u, t, integrator) -> u[3] - level,
-            function (integrator)
-                push!(hits, integrator.t)
-                return bracket[] = (integrator.tprev, integrator.t)
-            end
-        )
-        DiffEqBase.solve!(
-            DiffEqBase.init(
-                prob, PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5()));
-                dt = 0.05, callback = cb
+    @testset "a long adaptive step degrades the event time" begin
+        # An event is only as accurate as the interpolant over the step that brackets
+        # it, so capping the step with dtmax improves it.
+        function locate(; kwargs...)
+            hits = Float64[]
+            cb = ContinuousCallback(
+                (u, t, integrator) -> u[3] - level,
+                integrator -> push!(hits, integrator.t)
             )
-        )
-        t0 = bracket[][1]
-        # u[3] is solved exactly by the first operator alone.
-        u3(t) = 3 * exp(-0.1t)
-        # The step originally ended where the event time now sits plus the part of the
-        # step that was cut off; recover it from the interpolant relation instead.
-        @test length(hits) == 1
-        @test hits[1] > t0
-        # The event solves the *linear* interpolant, so g is zero there by
-        # construction while the true crossing is elsewhere.
-        @test !isapprox(hits[1], exact; atol = 1.0e-3)
-        @test u3(hits[1]) < level      # the linear chord under-estimates a convex decay
+            DiffEqBase.solve!(
+                DiffEqBase.init(
+                    prob, PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5()));
+                    dt = 0.05, callback = cb, kwargs...
+                )
+            )
+            return only(hits)
+        end
+
+        @test abs(locate(dtmax = 0.05) - exact) < abs(locate() - exact)
     end
 
     @testset "interp_points = 0 skips the safety sweep" begin
@@ -351,8 +332,8 @@ end
             integrator -> nothing
         )
         DiffEqBase.solve!(DiffEqBase.init(prob, ltg_exact(); dt = 0.25, callback = cb2))
-        # The default `interp_points = 11` samples the (collinear) interpolant many
-        # more times without being able to find anything the endpoints missed.
+        # The default `interp_points = 11` sweeps the interpolant for sign changes
+        # the endpoints missed; with `0` the condition is only seen at the endpoints.
         @test calls[] < sweeping[]
     end
 end
@@ -362,7 +343,7 @@ end
     levels = (2.9, 2.85)
 
     # Current DiffEqBase hands `affect!` a mask of simultaneous events rather than a
-    # single index; accept either shape so this does not depend on that detail.
+    # single index; accept either shape.
     fired_index(idx::Integer) = Int(idx)
     fired_index(mask) = only(findall(!iszero, mask))
 

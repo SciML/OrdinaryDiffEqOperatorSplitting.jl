@@ -42,9 +42,6 @@ abstract type AbstractOperatorSplittingAlgorithm end
 abstract type AbstractOperatorSplittingCache end
 
 @inline SciMLBase.isadaptive(::AbstractOperatorSplittingAlgorithm) = false
-# `AbstractOperatorSplittingAlgorithm` is not a `SciMLBase.AbstractDEAlgorithm`, so it
-# does not pick up the generic trait fallbacks. The continuous callback root finder
-# asks for this one.
 @inline SciMLBase.isdiscrete(::AbstractOperatorSplittingAlgorithm) = false
 @inline isdtchangeable(alg::AbstractOperatorSplittingAlgorithm) = all(isdtchangeable.(alg.inner_algs))
 

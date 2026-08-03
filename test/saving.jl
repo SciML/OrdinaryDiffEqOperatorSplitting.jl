@@ -28,11 +28,24 @@ fsplit = GenericSplitFunction((f1, f2), ([1, 2, 3], [1, 2]))
 make_prob(tspan = TSPAN) = OperatorSplittingProblem(fsplit, copy(U0), tspan)
 ltg() = LieTrotterGodunov((Euler(), Euler()))
 
+# Swept by every test that is not about one particular scheme.
+algs() = (
+    LieTrotterGodunov((Tsit5(), Tsit5())),
+    StrangMarchuk((Tsit5(), Tsit5())),
+    PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5())),
+)
+
+function exact(t)
+    p = 1.5 * exp(-0.11t)     # (1, 1) mode
+    m = -0.5 * exp(-0.09t)    # (1, -1) mode
+    return [p + m, p - m, 3 * exp(-0.1t)]
+end
+rhs(u) = [-0.1u[1] - 0.01u[2], -0.1u[2] - 0.01u[1], -0.1u[3]]
+
 @testset "saved time points" begin
     prob = make_prob()
 
     @testset "default saves only the interval endpoints" begin
-        # `save_everystep` defaults to false, so only `save_start`/`save_end` fire.
         sol = DiffEqBase.solve!(DiffEqBase.init(prob, ltg(); dt = 0.1))
         @test sol.t == [0.0, 1.0]
         @test length(sol.u) == 2
@@ -107,8 +120,7 @@ ltg() = LieTrotterGodunov((Euler(), Euler()))
     end
 
     @testset "asking for output does not change the trajectory" begin
-        # saveat points are interpolated, never stepped onto, so the sequence of
-        # steps -- and hence the splitting error -- is untouched.
+        # saveat points are interpolated, never stepped onto.
         plain = DiffEqBase.solve!(DiffEqBase.init(prob, ltg(); dt = 0.1))
         dense = DiffEqBase.solve!(
             DiffEqBase.init(prob, ltg(); dt = 0.1, saveat = 0.017, save_everystep = true)
@@ -117,9 +129,7 @@ ltg() = LieTrotterGodunov((Euler(), Euler()))
     end
 
     @testset "saveat times passed as tstops are landed on, not interpolated" begin
-        # The documented way to get output that is accurate to the order of the
-        # scheme: the integrator steps exactly onto the time, so the saved value is
-        # the stepped state rather than the (first order) interpolant.
+        # The documented way to get output accurate to the order of the scheme.
         ts = [0.25, 0.55]
         landed = DiffEqBase.solve!(
             DiffEqBase.init(prob, ltg(); dt = 0.1, tstops = ts, saveat = ts)
@@ -133,8 +143,7 @@ ltg() = LieTrotterGodunov((Euler(), Euler()))
             @test t in landed.t
             @test t in interpolated.t
         end
-        # Same requested output times, two different values: one is the stepped
-        # state, the other the interpolant of the step that straddles the time.
+        # Same times, different values: stepped state vs. interpolated one.
         for t in ts
             a = landed.u[findfirst(==(t), landed.t)]
             b = interpolated.u[findfirst(==(t), interpolated.t)]
@@ -158,11 +167,7 @@ ltg() = LieTrotterGodunov((Euler(), Euler()))
     end
 
     @testset "other algorithms" begin
-        for alg in (
-                StrangMarchuk((Euler(), Euler())),
-                StrangMarchuk((Tsit5(), Tsit5())),
-                PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5())),
-            )
+        for alg in algs()
             sol = DiffEqBase.solve!(
                 DiffEqBase.init(prob, alg; dt = 0.1, saveat = [0.5])
             )
@@ -189,82 +194,38 @@ end
 @testset "interpolation" begin
     prob = make_prob()
 
-    @testset "reproduces the step endpoints" begin
-        integrator = DiffEqBase.init(prob, ltg(); dt = 0.1)
+    @testset "$(nameof(typeof(alg)))" for alg in algs()
+        integrator = DiffEqBase.init(prob, alg; dt = 0.1)
         DiffEqBase.step!(integrator)
-        @test integrator(integrator.tprev) ≈ integrator.uprev
-        @test integrator(integrator.t) ≈ integrator.u
-    end
+        DiffEqBase.step!(integrator)
+        (; tprev, t) = integrator
+        tmid = (tprev + t) / 2
 
-    @testset "is linear in between" begin
-        integrator = DiffEqBase.init(prob, ltg(); dt = 0.1)
-        DiffEqBase.step!(integrator)
-        (; tprev, t, uprev, u) = integrator
-        tmid = tprev + (t - tprev) / 3
-        Θ = (tmid - tprev) / (t - tprev)
-        @test integrator(tmid) ≈ @. (1 - Θ) * uprev + Θ * u
-    end
+        @test integrator(tprev) ≈ integrator.uprev
+        @test integrator(t) ≈ integrator.u
+        @test integrator(tmid) ≈ exact(tmid) rtol = 1.0e-2
+        @test integrator(tmid, Val{1}) ≈ rhs(exact(tmid)) rtol = 1.0e-2
+        # For an adaptive scheme `dt` is already the next proposal, so the endpoints
+        # above are only reproduced if the interpolant does not key off it.
+        SciMLBase.isadaptive(alg) && @test integrator.dt != t - tprev
 
-    @testset "first derivative is the step slope" begin
-        integrator = DiffEqBase.init(prob, ltg(); dt = 0.1)
-        DiffEqBase.step!(integrator)
-        (; tprev, t, uprev, u) = integrator
-        expected = (u .- uprev) ./ (t - tprev)
-        @test integrator(tprev + (t - tprev) / 2, Val{1}) ≈ expected
-        # Constant slope: the derivative does not depend on where it is evaluated.
-        @test integrator(t, Val{1}) ≈ expected
-    end
-
-    @testset "in-place and idxs" begin
-        integrator = DiffEqBase.init(prob, ltg(); dt = 0.1)
-        DiffEqBase.step!(integrator)
-        tmid = (integrator.tprev + integrator.t) / 2
         out = similar(integrator.u)
         integrator(out, tmid)
         @test out ≈ integrator(tmid)
-
         @test integrator(tmid, Val{0}; idxs = 2) ≈ integrator(tmid)[2]
-        @test integrator(tmid, Val{0}; idxs = [1, 3]) ≈ integrator(tmid)[[1, 3]]
-
         sub = similar(integrator.u, 2)
         integrator(sub, tmid, Val{0}; idxs = [1, 3])
         @test sub ≈ integrator(tmid)[[1, 3]]
-    end
 
-    @testset "does not read the stale dt" begin
-        # After an accepted step the controller has already replaced `dt` with the
-        # next proposal, so an interpolant keyed off `integrator.dt` would be wrong.
-        integrator = DiffEqBase.init(
-            prob, PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5())); dt = 0.1
+        sol = DiffEqBase.solve!(
+            DiffEqBase.init(
+                prob, alg; dt = 0.1, saveat = [0.05], save_everystep = true
+            )
         )
-        DiffEqBase.step!(integrator)
-        DiffEqBase.step!(integrator)
-        @test integrator.dt != integrator.t - integrator.tprev
-        @test integrator(integrator.t) ≈ integrator.u
-        @test integrator(integrator.tprev) ≈ integrator.uprev
-    end
-
-    @testset "sol(t) matches the integrator interpolant" begin
-        integrator = DiffEqBase.init(prob, ltg(); dt = 0.1, save_everystep = true)
-        sol = DiffEqBase.solve!(integrator)
-        # Between two saved step endpoints `sol.interp` is the same linear
-        # interpolant the integrator uses within a step.
-        i = 4
-        t0, t1 = sol.t[i], sol.t[i + 1]
-        tmid = (t0 + t1) / 2
-        @test sol(tmid) ≈ (sol.u[i] .+ sol.u[i + 1]) ./ 2
-    end
-
-    @testset "saveat values are the step interpolant" begin
-        tmid = 0.05   # strictly inside the first step of length 0.1
-        integrator = DiffEqBase.init(
-            prob, ltg(); dt = 0.1, saveat = [tmid], save_everystep = true
-        )
-        sol = DiffEqBase.solve!(integrator)
-        idx = findfirst(==(tmid), sol.t)
-        @test idx !== nothing
-        # Bracketing saved points are the enclosing step's endpoints.
-        @test sol.u[idx] ≈ (sol.u[idx - 1] .+ sol.u[idx + 1]) ./ 2
+        @test sol.u[findfirst(==(0.05), sol.t)] ≈ exact(0.05) rtol = 1.0e-2
+        for τ in (0.35, 0.62, 0.97)
+            @test sol(τ) ≈ exact(τ) rtol = 1.0e-2
+        end
     end
 end
 
@@ -281,7 +242,6 @@ end
         SciMLBase.change_t_via_interpolation!(integrator, tmid)
         @test integrator.t == tmid
         @test integrator.u ≈ expected
-        # Every child clock and buffer follows the parent.
         OS.validate_time_point(integrator)
         for child in integrator.child_subintegrators
             @test child.t == tmid
@@ -308,8 +268,7 @@ end
     end
 
     @testset "accepts the Val{:false} the callback path passes" begin
-        # DiffEqBase's continuous callback path calls this with `Val{:false}` -- a
-        # `Val` of the Symbol -- so the flag must be decoded by dispatch.
+        # A `Val` of the *Symbol*, so the flag has to be decoded by dispatch.
         integrator = DiffEqBase.init(prob, ltg(); dt = 0.1)
         DiffEqBase.step!(integrator)
         tmid = (integrator.tprev + integrator.t) / 2
@@ -331,8 +290,16 @@ end
 @testset "solution object plumbing" begin
     prob = make_prob()
 
-    @testset "dense output is rejected" begin
-        @test_throws ArgumentError DiffEqBase.init(prob, ltg(); dt = 0.1, dense = true)
+    @testset "dense is accepted and does not reach the leaves" begin
+        integrator = DiffEqBase.init(
+            prob, ltg(); dt = 0.1, dense = true, save_everystep = true
+        )
+        sol = DiffEqBase.solve!(integrator)
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.35) ≈ (sol.u[4] .+ sol.u[5]) ./ 2
+        # `dense` must be swallowed by `__init`; a leaf handed `dense = true` would
+        # store interpolation data for stages that are not solution points.
+        @test integrator.child_subintegrators[1].sol.dense == false
     end
 
     @testset "sol.stats is a real DEStats" begin
@@ -389,8 +356,7 @@ end
     @testset "a new u0 reaches the whole tree" begin
         # Regression: a leaf's `reinit!` restores the `u0` slice captured when it was
         # built, and the palindromic schemes skip the forward sync of their first
-        # child -- so `reinit!(integrator, u0)` used to integrate a stale child state
-        # and silently return the wrong answer.
+        # child, so this used to integrate a stale child state.
         u0b = [10.0, 20.0, 30.0]
         probb = OperatorSplittingProblem(fsplit, copy(u0b), TSPAN)
         for alg in (
@@ -420,8 +386,7 @@ end
 end
 
 @testset "callbacks can be attached" begin
-    # Regression: DiffEqBase's `initialize!` reads the `derivative_discontinuity`
-    # field directly, so `init` used to throw as soon as any callback was passed.
+    # Regression: `init` used to throw as soon as any callback was passed.
     prob = make_prob()
     calls = Ref(0)
     cb = DiscreteCallback((u, t, integrator) -> false, integrator -> (calls[] += 1))
