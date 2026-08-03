@@ -592,9 +592,9 @@ function _subreinit_child!(
 end
 
 # ---------------------------------------------------------------------------
-# handle_tstop!
+# _handle_tstop!
 # ---------------------------------------------------------------------------
-function OrdinaryDiffEqCore.handle_tstop!(integrator::AnySplitIntegrator)
+function _handle_tstop!(integrator::AnySplitIntegrator)
     if SciMLBase.has_tstop(integrator)
         # The heaps store raw times; comparisons happen in tdir-space so that
         # "ahead"/"behind" is direction independent.
@@ -724,7 +724,7 @@ end
 # re-run it -- a transiently failed non-adaptive child would otherwise stay failed
 # forever and turn every escalated failure fatal.
 function _reset_child_failure!(child::SplitSubIntegrator)
-    _child_failed(child) && (child.status.retcode = ReturnCode.Default)
+    child_failed(child) && (child.status.retcode = ReturnCode.Default)
     child.last_step_failed = false
     child.force_stepfail = false
     return nothing
@@ -763,7 +763,7 @@ function step_header!(integrator::AnySplitIntegrator)
         update_uprev!(integrator)
     end
     increment_iteration(integrator)
-    OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator)
+    _fix_dt_at_bounds!(integrator)
     modify_dt_for_tstops!(integrator)
     integrator.force_stepfail = false
     return nothing
@@ -894,7 +894,7 @@ function step_footer!(integrator::AnySplitIntegrator)
 end
 
 function abort_below_dtmin!(integrator::AnySplitIntegrator)
-    abs(integrator.dt) > abs(OrdinaryDiffEqCore.timedepentdtmin(integrator)) && return nothing
+    abs(integrator.dt) > abs(DiffEqBase.timedepentdtmin(integrator)) && return nothing
     _is_verbose(integrator.opts.verbose) &&
         @warn("dt <= dtmin. Aborting. There is either an error in your model specification or the true solution is unstable.")
     _set_retcode!(integrator, ReturnCode.DtLessThanMin)
@@ -928,7 +928,7 @@ function DiffEqBase.solve!(integrator::OperatorSplittingIntegrator)
             step_footer!(integrator)
             SciMLBase.has_tstop(integrator) || break
         end
-        OrdinaryDiffEqCore.handle_tstop!(integrator)
+        _handle_tstop!(integrator)
     end
     SciMLBase.postamble!(integrator)
     integrator.sol.retcode != ReturnCode.Default && return integrator.sol
@@ -965,7 +965,7 @@ function DiffEqBase.step!(integrator::AnySplitIntegrator)
             step_footer!(integrator)
         end
     end
-    OrdinaryDiffEqCore.handle_tstop!(integrator)
+    _handle_tstop!(integrator)
     return
 end
 
@@ -991,10 +991,10 @@ function DiffEqBase.step!(integrator::AnySplitIntegrator, dt, stop_at_tdt = fals
             # root -- and leaving one in the heap once we sit exactly on it makes
             # the next header compute a zero step-to-tstop gap: the loop would
             # then spin at fixed `t` forever, growing the child tstop heaps.
-            OrdinaryDiffEqCore.handle_tstop!(integrator)
+            _handle_tstop!(integrator)
         end
     end
-    OrdinaryDiffEqCore.handle_tstop!(integrator)
+    _handle_tstop!(integrator)
     return nothing
 end
 
@@ -1006,7 +1006,7 @@ function SciMLBase.check_error(integrator::OperatorSplittingIntegrator)
             integrator.sol.retcode != ReturnCode.Default
         return integrator.sol.retcode
     end
-    if DiffEqBase.NAN_CHECK(integrator.dtcache) || DiffEqBase.NAN_CHECK(integrator.dt)
+    if isnan(integrator.dtcache) || isnan(integrator.dt)
         _is_verbose(integrator.opts.verbose) &&
             @warn("NaN dt detected. Likely a NaN value in the state, parameters, or derivative value caused this outcome.")
         return ReturnCode.DtNaN
@@ -1019,7 +1019,7 @@ function SciMLBase.check_error(integrator::SplitSubIntegrator)
             integrator.status.retcode != ReturnCode.Default
         return integrator.status.retcode
     end
-    if DiffEqBase.NAN_CHECK(integrator.dtcache) || DiffEqBase.NAN_CHECK(integrator.dt)
+    if isnan(integrator.dtcache) || isnan(integrator.dt)
         _is_verbose(integrator.opts.verbose) &&
             @warn("NaN dt detected. Likely a NaN value in the state, parameters, or derivative value caused this outcome.")
         return ReturnCode.DtNaN
@@ -1081,7 +1081,7 @@ end
 
 Dense output of a single operator splitting step, evaluated in the step-local
 coordinate `Θ = (t - tprev) / dt`, where `y₀`/`y₁` are the state at `tprev`/`t` and
-`dt` is the step that was taken. `D` is the requested derivative order and `idxs`
+`dt` is the step that was taken. `D` is derivative order `0` or `1`, and `idxs`
 selects components (`nothing` for all of them).
 
 This is the extension point for higher order dense output: dispatch on the
@@ -1091,14 +1091,37 @@ algorithm's cache type. The fallback for any
 splitting_interpolant, splitting_interpolant!
 
 splitting_interpolant(
-    integrator, ::AbstractOperatorSplittingCache, Θ, dt, y₀, y₁, idxs, ::Type{Val{D}}
-) where {D} = SciMLBase.linear_interpolant(Θ, dt, y₀, y₁, idxs, Val{D})
+    integrator, ::AbstractOperatorSplittingCache, Θ, dt, y₀, y₁, idxs, deriv
+) = _linear_interpolant(Θ, dt, y₀, y₁, idxs, deriv)
 
 function splitting_interpolant!(
         out, integrator, ::AbstractOperatorSplittingCache, Θ, dt, y₀, y₁, idxs,
         ::Type{Val{D}}
     ) where {D}
-    SciMLBase.linear_interpolant!(out, Θ, dt, y₀, y₁, idxs, Val{D})
+    return _linear_interpolant!(out, Θ, dt, y₀, y₁, idxs, Val{D})
+end
+
+_linear_interpolant(Θ, dt, y₀, y₁, ::Nothing, ::Type{Val{0}}) =
+    @. (1 - Θ) * y₀ + Θ * y₁
+_linear_interpolant(Θ, dt, y₀, y₁, idxs, ::Type{Val{0}}) =
+    @. (1 - Θ) * y₀[idxs] + Θ * y₁[idxs]
+_linear_interpolant(Θ, dt, y₀, y₁, ::Nothing, ::Type{Val{1}}) = (y₁ - y₀) / dt
+_linear_interpolant(Θ, dt, y₀, y₁, idxs, ::Type{Val{1}}) = (y₁[idxs] - y₀[idxs]) / dt
+
+function _linear_interpolant!(out, Θ, dt, y₀, y₁, ::Nothing, ::Type{Val{0}})
+    @. out = (1 - Θ) * y₀ + Θ * y₁
+    return out
+end
+function _linear_interpolant!(out, Θ, dt, y₀, y₁, idxs, ::Type{Val{0}})
+    @. out = (1 - Θ) * y₀[idxs] + Θ * y₁[idxs]
+    return out
+end
+function _linear_interpolant!(out, Θ, dt, y₀, y₁, ::Nothing, ::Type{Val{1}})
+    @. out = (y₁ - y₀) / dt
+    return out
+end
+function _linear_interpolant!(out, Θ, dt, y₀, y₁, idxs, ::Type{Val{1}})
+    @. out = (y₁[idxs] - y₀[idxs]) / dt
     return out
 end
 
@@ -1261,6 +1284,29 @@ end
 
 handle_callbacks!(::SplitSubIntegrator) = nothing
 
+@generated function _apply_ith_continuous_callback!(
+        integrator,
+        time,
+        upcrossing,
+        event_idx,
+        callback_index,
+        callbacks::NTuple{N, Union{SciMLBase.ContinuousCallback, SciMLBase.VectorContinuousCallback}},
+    ) where {N}
+    expression = :(throw(BoundsError(callbacks, callback_index)))
+    for i in N:-1:1
+        expression = quote
+            if callback_index == $i
+                return DiffEqBase.apply_callback!(
+                    integrator, callbacks[$i], time, upcrossing, event_idx
+                )
+            else
+                $expression
+            end
+        end
+    end
+    return expression
+end
+
 function handle_callbacks!(integrator::OperatorSplittingIntegrator)
     discrete_callbacks = integrator.callback.discrete_callbacks
     continuous_callbacks = integrator.callback.continuous_callbacks
@@ -1277,7 +1323,7 @@ function handle_callbacks!(integrator::OperatorSplittingIntegrator)
         if event_occurred
             integrator.event_last_time = idx
             integrator.vector_event_last_time = event_idx
-            continuous_modified, saved_in_cb = OrdinaryDiffEqCore.apply_ith_callback!(
+            continuous_modified, saved_in_cb = _apply_ith_continuous_callback!(
                 integrator, time, upcrossing, event_idx, idx, continuous_callbacks
             )
             # The step was cut at the event and the state may have jumped, so the
@@ -1480,7 +1526,23 @@ function __step!(integrator::AnySplitIntegrator)
     return nothing
 end
 
-# Entry point: dispatch to the algorithm's advance_solution_by!
+"""
+    advance_solution_by!(parent, child, dt)
+
+Advance one direct child of an operator-splitting node by the signed duration `dt`.
+
+# Arguments
+- `parent`: The node that owns `child` and coordinates the splitting step.
+- `child`: A leaf `DEIntegrator` or nested splitting node.
+- `dt`: Signed duration to apply to the child.
+
+# Returns
+`nothing`. This function only advances the child; a custom
+[`_perform_step!`](@ref) must synchronize the child before and after the call and use
+[`child_failed`](@ref) before accepting its state.
+
+This is a developer extension API, not a supported end-user API.
+"""
 function advance_solution_by!(integrator::AnySplitIntegrator, dt)
     return advance_solution_by!(integrator, integrator.cache, dt)
 end
@@ -1519,7 +1581,7 @@ end
 # so it already exhausted its own adaptation); `ReturnCode.Default` if none is.
 @unroll function _fatal_child_retcode(children::Tuple)
     @unroll for child in children
-        if _child_failed(child) && _child_is_adaptive(child)
+        if child_failed(child) && _child_is_adaptive(child)
             return _failure_retcode(child)
         end
     end
@@ -1528,7 +1590,7 @@ end
 
 @unroll function _first_failed_child_retcode(children::Tuple)
     @unroll for child in children
-        _child_failed(child) && return _failure_retcode(child)
+        child_failed(child) && return _failure_retcode(child)
     end
     return ReturnCode.Failure
 end

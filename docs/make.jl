@@ -24,8 +24,7 @@ makedocs(
         collapselevel = 1
     ),
     sitename = "OrdinaryDiffEqOperatorSplitting.jl",
-    doctest = false,
-    warnonly = true,
+    checkdocs = :exports,
     draft = false,
     pages = Any[
         "Home" => "index.md",

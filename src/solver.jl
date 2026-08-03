@@ -48,7 +48,7 @@ end
 
         @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
         @timeit_debug "time solve" advance_solution_by!(parent, child, dt)
-        if _child_failed(child)
+        if child_failed(child)
             parent.force_stepfail = true
             return
         end
@@ -111,7 +111,7 @@ end
 
         @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
         @timeit_debug "time solve" advance_solution_by!(parent, child, step_dt)
-        if _child_failed(child)
+        if child_failed(child)
             parent.force_stepfail = true
             return
         end
@@ -132,7 +132,7 @@ end
 
         @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
         @timeit_debug "time solve" advance_solution_by!(parent, child, half_dt)
-        if _child_failed(child)
+        if child_failed(child)
             parent.force_stepfail = true
             return
         end
@@ -227,7 +227,7 @@ function _ppltg_advance_child!(parent, child, i, dt)
 
     @timeit_debug "sync ->" forward_sync_subintegrator!(parent, child, idxs, sync)
     @timeit_debug "time solve" advance_solution_by!(parent, child, dt)
-    if _child_failed(child)
+    if child_failed(child)
         parent.force_stepfail = true
         return
     end

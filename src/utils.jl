@@ -27,9 +27,16 @@ end
 """
     need_sync(a, b)
 
-Determines whether it is necessary to synchronize two objects with any
-solution information. A possible reason when no synchronization is necessary
-might be that the vectors alias each other in memory.
+Return whether copying solution information from `b` into `a` is necessary.
+
+# Arguments
+- `a`: Destination vector or view.
+- `b`: Source vector or view.
+
+# Returns
+`false` when both arguments share the same backing storage and copying would be
+redundant; `true` otherwise. Extend this function for custom array wrappers whose
+aliasing relationship cannot be determined by the built-in vector methods.
 """
 need_sync
 
@@ -41,7 +48,15 @@ need_sync(a::SubArray, b::SubArray) = a.parent !== b.parent
 """
     sync_vectors!(a, b)
 
-Copies the information in `b` into `a` if synchronization is necessary.
+Copy solution information from `b` into `a` when [`need_sync`](@ref) determines that
+their storage does not alias.
+
+# Arguments
+- `a`: Destination vector or view.
+- `b`: Source vector or view.
+
+# Returns
+`nothing`. If no copy is required, `a` is left unchanged.
 """
 function sync_vectors!(a, b)
     if need_sync(a, b) && a !== b
@@ -51,14 +66,25 @@ function sync_vectors!(a, b)
 end
 
 """
-    forward_sync_subintegrator!(parent_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+    forward_sync_subintegrator!(parent_integrator::AnySplitIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
 
-This function is responsible of copying the solution and parameters of the parent integrator and the synchronized subintegrators with the information given into the inner integrator.
-If the inner integrator is synchronized with other inner integrators using `sync`, the function `forward_sync_external!` shall be dispatched for `sync`.
-The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
-The `solution_indices` are indices into the parent integrators solution vectors.
+Synchronize one child with its parent immediately before advancing that child.
+
+# Arguments
+- `parent_integrator`: Splitting node that owns the current full solution.
+- `inner_integrator`: Direct leaf child to receive its local state.
+- `solution_indices`: Indices selecting the child state in the parent's solution.
+- `sync`: Synchronizer object for any parameter or cross-child synchronization.
+
+# Interface requirements
+The built-in method copies the parent's selected state into `inner_integrator` and
+marks its derivative cache stale. To synchronize parameters or coupled child state,
+implement `forward_sync_external!(parent_integrator, inner_integrator, sync)` for the
+concrete `sync` type.
+
+# Returns
+`nothing`.
 """
-
 function forward_sync_subintegrator!(
         parent::AnySplitIntegrator,
         child::DEIntegrator,
@@ -102,14 +128,25 @@ end
 
 
 """
-    backward_sync_subintegrator!(parent_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+    backward_sync_subintegrator!(parent_integrator::AnySplitIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
 
-This function is responsible of copying the solution of the inner integrator back into parent integrator and the synchronized subintegrators.
-If the inner integrator is synchronized with other inner integrators using `sync`, the function `backward_sync_external!` shall be dispatched for `sync`.
-The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
-The `solution_indices` are indices in the parent integrators solution vectors.
+Synchronize one advanced child back into its parent.
+
+# Arguments
+- `parent_integrator`: Splitting node that owns the full solution.
+- `inner_integrator`: Direct leaf child whose state is copied back.
+- `solution_indices`: Indices selecting the child state in the parent's solution.
+- `sync`: Synchronizer object for parameter or cross-child synchronization.
+
+# Interface requirements
+The built-in method copies the child state into the parent's selected state. To
+synchronize parameters or coupled child state, implement
+`backward_sync_external!(parent_integrator, inner_integrator, sync)` for the concrete
+`sync` type.
+
+# Returns
+`nothing`.
 """
-
 function backward_sync_subintegrator!(
         parent::AnySplitIntegrator,
         child::DEIntegrator,
@@ -133,6 +170,50 @@ end
 # forward_sync_external! / backward_sync_external!
 # These handle parameter synchronisation via the `sync` object.
 # ---------------------------------------------------------------------------
+
+"""
+    forward_sync_external!(parent_integrator, inner_integrator, sync)
+
+Synchronize external state into a child immediately before that child advances.
+
+# Arguments
+- `parent_integrator`: Splitting parent that owns the full state.
+- `inner_integrator`: Direct child receiving the synchronized state.
+- `sync`: Synchronizer object selected in the [`GenericSplitFunction`](@ref) tree.
+
+# Interface requirements
+Implement this method for a concrete `sync` type when parameters or coupled child
+state must be refreshed before the child solves. The default
+[`NoExternalSynchronization`](@ref) implementation is a no-op.
+
+# Returns
+`nothing`.
+
+This is a developer extension API, not a supported end-user API.
+"""
+function forward_sync_external! end
+
+"""
+    backward_sync_external!(parent_integrator, inner_integrator, sync)
+
+Synchronize external state after a child has advanced.
+
+# Arguments
+- `parent_integrator`: Splitting parent that owns the full state.
+- `inner_integrator`: Direct child whose result may update coupled state.
+- `sync`: Synchronizer object selected in the [`GenericSplitFunction`](@ref) tree.
+
+# Interface requirements
+Implement this method for a concrete `sync` type when parameters or coupled child
+state must be refreshed after the child solves. The default
+[`NoExternalSynchronization`](@ref) implementation is a no-op.
+
+# Returns
+`nothing`.
+
+This is a developer extension API, not a supported end-user API.
+"""
+function backward_sync_external! end
 
 # NoExternalSynchronization: no-op for all parent/child combinations
 forward_sync_external!(parent::DEIntegrator, child::DEIntegrator, ::NoExternalSynchronization) = nothing
@@ -170,11 +251,11 @@ function synchronize_solution_with_parameters!(
 end
 
 # Time stuff
-function OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator::AnySplitIntegrator)
+function _fix_dt_at_bounds!(integrator::AnySplitIntegrator)
     # dtmin/dtmax are magnitudes; clamp |dt| and restore the direction. dtmin wins
     # over dtmax if the two conflict.
     dtmax = abs(integrator.opts.dtmax)
-    dtmin = abs(OrdinaryDiffEqCore.timedepentdtmin(integrator))
+    dtmin = abs(DiffEqBase.timedepentdtmin(integrator))
     integrator.dt = tdir(integrator) * max(min(abs(integrator.dt), dtmax), dtmin)
     return nothing
 end
@@ -197,15 +278,15 @@ function validate_time_point(parent, child::DEIntegrator)
 end
 
 # ---------------------------------------------------------------------------
-# _child_failed: check whether a child failed
+# child_failed: check whether a child failed
 #
 # Leaves are checked through `SciMLBase.check_error`, not their stored retcode:
 # fixed-step leaf integrators complete `step!` with NaN state without flagging it
 # themselves, and the failure has to be caught *before* the surrounding step is
 # accepted so that the escalation protocol can retry from a clean `uprev`.
 # ---------------------------------------------------------------------------
-_child_failed(child::DEIntegrator) =
+child_failed(child::DEIntegrator) =
     SciMLBase.check_error(child) ∉ (ReturnCode.Default, ReturnCode.Success)
 
-_child_failed(child::SplitSubIntegrator) =
+child_failed(child::SplitSubIntegrator) =
     child.status.retcode ∉ (ReturnCode.Default, ReturnCode.Success)

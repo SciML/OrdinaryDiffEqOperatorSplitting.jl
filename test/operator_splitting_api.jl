@@ -8,6 +8,42 @@ using OrdinaryDiffEqTsit5
 using ModelingToolkit
 using SciMLIterators: TimeChoiceIterator, intervals
 
+const OS = OrdinaryDiffEqOperatorSplitting
+
+struct ExternalFirstOrderAlgorithm{AlgTuple} <: OS.AbstractOperatorSplittingAlgorithm
+    inner_algs::AlgTuple
+end
+
+struct ExternalFirstOrderCache{U, UPrev} <: OS.AbstractOperatorSplittingCache
+    u::U
+    uprev::UPrev
+end
+
+function OS.init_cache(
+        ::OS.GenericSplitFunction, ::ExternalFirstOrderAlgorithm;
+        uprev::AbstractArray, u::AbstractVector
+    )
+    return ExternalFirstOrderCache(u, uprev)
+end
+
+function OS._perform_step!(
+        parent, children::Tuple, ::ExternalFirstOrderCache, dt
+    )
+    for i in eachindex(children)
+        child = children[i]
+        indices = parent.child_solution_indices[i]
+        synchronizer = parent.child_synchronizers[i]
+        OS.forward_sync_subintegrator!(parent, child, indices, synchronizer)
+        OS.advance_solution_by!(parent, child, dt)
+        if OS.child_failed(child)
+            parent.force_stepfail = true
+            return nothing
+        end
+        OS.backward_sync_subintegrator!(parent, child, indices, synchronizer)
+    end
+    return nothing
+end
+
 # ---------------------------------------------------------------------------
 # Reference problem
 # ---------------------------------------------------------------------------
@@ -75,6 +111,33 @@ _sub2_iter_factor(::PalindromicPairLieTrotterGodunov) = 2
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+@testset "generic developer solver interface" begin
+    f1dofs = [1, 2, 3]
+    f2dofs = [1, 3]
+    split_function = GenericSplitFunction((f1, f2), (f1dofs, f2dofs))
+    problem = OperatorSplittingProblem(split_function, u0, (0.0, 1.0))
+    algorithm = ExternalFirstOrderAlgorithm((Euler(), Euler()))
+
+    integrator = DiffEqBase.init(
+        problem, algorithm; dt = 0.01, adaptive = false, verbose = false
+    )
+
+    @test integrator.cache isa ExternalFirstOrderCache
+    @test integrator.cache.u === integrator.u
+    @test integrator.cache.uprev === integrator.uprev
+    @test all(!OS.child_failed(child) for child in integrator.child_subintegrators)
+
+    solution = DiffEqBase.solve!(integrator)
+    @test solution.retcode == DiffEqBase.ReturnCode.Success
+
+    reference = DiffEqBase.init(
+        problem, LieTrotterGodunov((Euler(), Euler()));
+        dt = 0.01, adaptive = false, verbose = false
+    )
+    DiffEqBase.solve!(reference)
+    @test integrator.u == reference.u
+end
+
 @testset "reinit and convergence" begin
     dt = 0.01π
 
