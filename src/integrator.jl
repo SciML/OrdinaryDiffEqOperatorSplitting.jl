@@ -23,6 +23,28 @@ end
 
 
 """
+    SaveOptions
+
+The saving settings of the outermost [`OperatorSplittingIntegrator`](@ref).
+
+Saving is a property of the outer integrator only: the inner splits are stages
+rather than steps, so there is no time point at which their state is a meaningful
+approximation of the split solution. These settings are therefore consumed by
+`__init` directly and never enter the [`ConfigTree`](@ref), which keeps them from
+travelling down to the leaf integrators.
+
+`saveat` itself is not held here -- it lives in the integrator's `saveat` heap,
+because it is consumed as the integration proceeds.
+"""
+struct SaveOptions
+    save_on::Bool
+    save_everystep::Bool
+    save_start::Bool
+    save_end::Bool
+end
+
+
+"""
     SplitSubIntegratorStatus
 
 Minimal error-communication object carried by a [`SplitSubIntegrator`](@ref).
@@ -103,7 +125,8 @@ mutable struct SplitSubIntegrator{
     controller_cache::controllerType
     force_stepfail::Bool
     last_step_failed::Bool
-    u_modified::Bool # TODO we can probably remove this
+    # Named after the field DiffEqBase's callback machinery reads directly.
+    derivative_discontinuity::Bool
     status::SplitSubIntegratorStatus
     stats::IntegratorStats
     cache::cacheType
@@ -147,6 +170,8 @@ mutable struct OperatorSplittingIntegrator{
         tstopsType,
         saveatType,
         callbackType,
+        callbackCacheType,
+        eventErrType,
         cacheType,
         solType,
         subintTreeType,
@@ -172,14 +197,31 @@ mutable struct OperatorSplittingIntegrator{
     saveat::heapType
     _saveat::saveatType
     callback::callbackType
+    # Scratch buffers a `VectorContinuousCallback` needs; `nothing` when the callback
+    # set contains none.
+    const callback_cache::callbackCacheType
+    # Continuous-callback bookkeeping. DiffEqBase's root finder reads
+    # `event_last_time`/`last_event_error` to avoid re-detecting the event it just
+    # handled, and `handle_callbacks!` is responsible for writing them.
+    event_last_time::Int
+    vector_event_last_time::Int
+    last_event_error::eventErrType
     advance_to_tstop::Bool
     last_step_failed::Bool
     force_stepfail::Bool
     isout::Bool
-    u_modified::Bool
+    # DiffEqBase's callback machinery reads this as a literal field (not through
+    # `derivative_discontinuity!`), so the name has to match exactly.
+    derivative_discontinuity::Bool
     just_hit_tstop::Bool
     cache::cacheType
     sol::solType
+    # Saving state. `saveiter` is the authoritative length of the saved prefix of
+    # `sol.t`/`sol.u`: `savevalues!` writes index `saveiter` and `postamble!`
+    # truncates both vectors to it.
+    const save_opts::SaveOptions
+    saveiter::Int
+    postamble_done::Bool
     # Tuple of SplitSubIntegrator nodes (one per top-level operator).
     child_subintegrators::subintTreeType
     child_solution_indices::childSolidxType # Tuple
@@ -229,7 +271,11 @@ function SciMLBase.__init(
         tstops = (),
         saveat = (),
         d_discontinuities = (),
+        save_on = true,
         save_everystep = false,
+        save_start = true,
+        save_end = true,
+        dense = false,
         callback = nothing,
         advance_to_tstop = false,
         adaptive = nothing,
@@ -240,6 +286,19 @@ function SciMLBase.__init(
     )
     (; u0, p) = prob
     t0, tf = prob.tspan
+
+    # Dense output would need per-step interpolation data on top of the saved
+    # points. The interpolant of a splitting step is linear (see the interpolation
+    # section below), so `sol(t)` already reproduces it exactly from `sol.t`/`sol.u`
+    # via SciMLBase's `LinearInterpolation` and storing `k` would buy nothing.
+    dense && throw(
+        ArgumentError(
+            "dense output is not supported by operator splitting integrators. The \
+            interpolant is linear, so `sol(t)` between saved points is already exact \
+            for it; use `saveat` or `save_everystep = true` to control the saved points."
+        )
+    )
+    save_opts = SaveOptions(save_on, save_everystep, save_start, save_end)
 
     # By default every node adapts exactly if its own algorithm does; a scalar or a
     # TreeOption overrides the whole tree explicitly.
@@ -280,8 +339,26 @@ function SciMLBase.__init(
     tmp = setup_u(prob, alg, false)
     uType = typeof(u)
 
-    sol = SciMLBase.build_solution(prob, alg, tType[], uType[])
+    # `build_solution` defaults `interp` to a `LinearInterpolation` over the very
+    # vectors passed in here, so `sol(t)` sees every later `savevalues!` push and
+    # agrees exactly with the integrator's own (linear) interpolant. `stats` has to
+    # be a real `DEStats`: the callback machinery increments `sol.stats.ncondition`.
+    sol = SciMLBase.build_solution(
+        prob, alg, tType[], uType[];
+        stats = SciMLBase.DEStats(0),
+        calculate_error = false,
+    )
     callback = DiffEqBase.CallbackSet(callback)
+
+    # Only a VectorContinuousCallback needs the scratch buffers, and they have to be
+    # wide enough for the widest one in the set.
+    max_len_cb = DiffEqBase.max_vector_callback_length_int(callback)
+    eventErrType = real(eltype(u))
+    callback_cache = if max_len_cb === nothing
+        nothing
+    else
+        DiffEqBase.CallbackCache(u, max_len_cb, eventErrType, eventErrType)
+    end
 
     child_subintegrators = build_subintegrators(
         prob, alg,
@@ -315,9 +392,12 @@ function SciMLBase.__init(
         tstops_internal, tstops,
         saveat_internal, saveat,
         callback,
+        callback_cache,
+        0, 1, zero(eventErrType),   # event_last_time, vector_event_last_time, last_event_error
         advance_to_tstop,
         false, false, false, false, false,
         cache, sol,
+        save_opts, 0, false,
         child_subintegrators,
         child_solution_indices,
         child_synchronizers,
@@ -330,8 +410,67 @@ function SciMLBase.__init(
         false,
         config,
     )
-    DiffEqBase.initialize!(callback, u0, t0, integrator)
+    # The initial save happens *after* the callbacks are initialized, so that an
+    # initializer which modifies `u` is reflected in the first saved point.
+    initialize_callbacks!(integrator)
+    save_initial_value!(integrator)
     return integrator
+end
+
+"""
+    initialize_callbacks!(integrator::OperatorSplittingIntegrator)
+
+Run the callbacks' `initialize` hooks, mirroring OrdinaryDiffEqCore's
+`initialize_callbacks!`.
+
+The flag starts out set so that an `initialize` hook can clear it -- the default
+initializer does exactly that -- and a hook that did modify `u` has its change
+propagated to `uprev` and to the subintegrator tree before the first step.
+"""
+function initialize_callbacks!(integrator::OperatorSplittingIntegrator)
+    integrator.derivative_discontinuity = true
+    # Pass the integrator's own `u`, not the problem's `u0`: with `alias_u0 = false`
+    # they are different arrays and a hook has to be able to modify the live state.
+    modified = DiffEqBase.initialize!(
+        integrator.callback, integrator.u, integrator.t, integrator
+    )
+    if modified
+        update_uprev!(integrator)
+        resync_children_after_modification!(integrator)
+    end
+    integrator.derivative_discontinuity = false
+    return nothing
+end
+
+# A callback that changed `u` invalidates every child's copy of its slice.
+# `rollback_children!` refills the children from the parent's `u`, re-anchors their
+# clocks and marks their state modified so leaf integrators drop FSAL data. It also
+# restores the `parent.u == child.u` invariant that lets the palindromic schemes skip
+# the forward sync of their first child (`next_sync_is_continuous`).
+function resync_children_after_modification!(integrator::OperatorSplittingIntegrator)
+    rollback_children!(integrator)
+    return nothing
+end
+
+function SciMLBase.reeval_internals_due_to_modification!(
+        integrator::OperatorSplittingIntegrator, continuous_modification = true;
+        callback_initializealg = nothing
+    )
+    resync_children_after_modification!(integrator)
+    integrator.derivative_discontinuity = false
+    return nothing
+end
+
+# `save_start` puts u(t0) at index 1, so the first `savevalues!` writes index 2.
+function save_initial_value!(integrator::OperatorSplittingIntegrator)
+    if integrator.save_opts.save_on && integrator.save_opts.save_start
+        integrator.saveiter = 1
+        RecursiveArrayTools.copyat_or_push!(integrator.sol.t, 1, integrator.t)
+        RecursiveArrayTools.copyat_or_push!(integrator.sol.u, 1, integrator.u)
+    else
+        integrator.saveiter = 0
+    end
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -379,12 +518,9 @@ function DiffEqBase.reinit!(
         resize!(integrator.sol.t, 0)
         resize!(integrator.sol.u, 0)
     end
-    if reinit_callbacks
-        DiffEqBase.initialize!(integrator.callback, u0, t0, integrator)
-    else
-        saving_callback = integrator.callback.discrete_callbacks[end]
-        DiffEqBase.initialize!(saving_callback, u0, t0, integrator)
-    end
+    integrator.event_last_time = 0
+    integrator.vector_event_last_time = 1
+    integrator.last_event_error = zero(integrator.last_event_error)
     if reinit_retcode
         integrator.sol = SciMLBase.solution_new_retcode(
             integrator.sol, ReturnCode.Default
@@ -400,6 +536,23 @@ function DiffEqBase.reinit!(
         erase_sol, tstops, saveat,
         reinit_callbacks, reinit_retcode
     )
+    # A leaf's `reinit!` restores it to the `u0` slice captured when it was built, not
+    # to the `u0` handed to this call, so the new state has to be pushed down
+    # explicitly. Relying on the forward sync of the next step is not enough: the
+    # palindromic schemes skip it for their first child.
+    resync_children_after_modification!(integrator)
+
+    # After the children, so that an initializer which modifies `u` (and therefore
+    # resyncs the tree) is not undone by the child reinit, and so that the first saved
+    # point is the state the initializers left behind.
+    if reinit_callbacks
+        initialize_callbacks!(integrator)
+    end
+    # Saving is built into the integrator rather than provided by a saving callback,
+    # so the initial save is redone regardless of `reinit_callbacks`. Stale entries
+    # past the new `saveiter` are truncated by `postamble!`.
+    integrator.postamble_done = false
+    save_initial_value!(integrator)
     return nothing
 end
 
@@ -649,7 +802,7 @@ function step_header!(integrator::AnySplitIntegrator)
         else
             reject_step!(integrator)
         end
-    elseif integrator.u_modified
+    elseif integrator.derivative_discontinuity
         update_uprev!(integrator)
     end
     increment_iteration(integrator)
@@ -682,8 +835,11 @@ is_first_iteration(integrator::AnySplitIntegrator) = integrator.iter == 0
 increment_iteration(integrator::AnySplitIntegrator) = integrator.iter += 1
 
 function footer_reset_flags!(integrator)
-    integrator.u_modified = false
+    integrator.derivative_discontinuity = false
     integrator.just_hit_tstop = false
+    # Re-arm the postamble: stepping on after a `solve!`/`done` (e.g. after pushing a
+    # further tstop) has to be able to close out the solution again.
+    integrator.postamble_done = false
     return
 end
 footer_reset_flags!(::SplitSubIntegrator) = nothing
@@ -692,14 +848,6 @@ function setup_validity_flags!(integrator, t_next)
     return
 end
 setup_validity_flags!(::SplitSubIntegrator, _) = nothing
-function fix_solution_buffer_sizes!(integrator, sol)
-    resize!(integrator.sol.t, integrator.saveiter)
-    resize!(integrator.sol.u, integrator.saveiter)
-    if !(integrator.sol isa SciMLBase.DAESolution)
-        resize!(integrator.sol.k, integrator.saveiter_dense)
-    end
-    return
-end
 
 # Window for absorbing floating point drift when landing on a time point. Scaled
 # by the local time scale *and* the step size: near t = 0 (e.g. integrating
@@ -753,6 +901,8 @@ function step_footer!(integrator::AnySplitIntegrator)
         try_snap_children_to_tstop!.(integrator.child_subintegrators, integrator.t)
         step_accept_controller!(integrator)
         validate_time_point(integrator)
+        # Callbacks run here (outer integrator only) and also perform the saving.
+        handle_callbacks!(integrator)
     elseif integrator.force_stepfail
         # Failure escalation protocol: the failing node's own adaptivity decides.
         fatal_rc = _fatal_child_retcode(integrator.child_subintegrators)
@@ -928,6 +1078,24 @@ function SciMLBase.check_error!(integrator::SplitSubIntegrator)
     return code
 end
 
+# SciMLBase's generic `check_error!` finalizes the integrator whenever the code is
+# anything but `Success`, but a mid-solve node legitimately reports `Default`: the
+# stepping loops call this before every step, so the generic version would run the
+# postamble -- callback finalizers, the endpoint save -- once per step. Only a real
+# failure finalizes here.
+function SciMLBase.check_error!(integrator::OperatorSplittingIntegrator)
+    code = SciMLBase.check_error(integrator)
+    # Rebuilding the solution allocates, and this runs before every step, so only
+    # touch it when the code actually changed.
+    if integrator.sol.retcode !== code
+        integrator.sol = SciMLBase.solution_new_retcode(integrator.sol, code)
+    end
+    if code ∉ (ReturnCode.Success, ReturnCode.Default)
+        SciMLBase.postamble!(integrator)
+    end
+    return code
+end
+
 @unroll function _check_error_children(current_retcode, children::Tuple)
     @unroll for child in children
         rc = _child_retcode(child)
@@ -949,13 +1117,301 @@ end
     return (integrator.tmp,)
 end
 
-function linear_interpolation!(y, t, y1, y2, t1, t2)
-    return y .= y1 + (t - t1) * (y2 - y1) / (t2 - t1)
+# ---------------------------------------------------------------------------
+# Interpolation
+#
+# A splitting step advances its children sequentially over staggered subintervals,
+# so the children's own interpolants do not compose into an approximation of the
+# split solution: the only dense output well defined at this level is the one built
+# from the endpoints the outer integrator owns. The generic fallback is therefore
+# linear, which is exact for the state a `LieTrotterGodunov` step produces and first
+# order for the second order schemes. An algorithm that can do better implements
+# `splitting_interpolant`/`splitting_interpolant!` for its own cache type; nothing
+# else in the saving or callback machinery has to change.
+# ---------------------------------------------------------------------------
+
+"""
+    splitting_interpolant(integrator, cache, Θ, dt, y₀, y₁, idxs, ::Type{Val{D}})
+    splitting_interpolant!(out, integrator, cache, Θ, dt, y₀, y₁, idxs, ::Type{Val{D}})
+
+Dense output of a single operator splitting step, evaluated in the step-local
+coordinate `Θ = (t - tprev) / dt`, where `y₀`/`y₁` are the state at `tprev`/`t` and
+`dt` is the step that was taken. `D` is the requested derivative order and `idxs`
+selects components (`nothing` for all of them).
+
+This is the extension point for higher order dense output: dispatch on the
+algorithm's cache type. The fallback for any
+[`AbstractOperatorSplittingCache`](@ref) is linear interpolation.
+"""
+splitting_interpolant, splitting_interpolant!
+
+splitting_interpolant(
+    integrator, ::AbstractOperatorSplittingCache, Θ, dt, y₀, y₁, idxs, ::Type{Val{D}}
+) where {D} = SciMLBase.linear_interpolant(Θ, dt, y₀, y₁, idxs, Val{D})
+
+function splitting_interpolant!(
+        out, integrator, ::AbstractOperatorSplittingCache, Θ, dt, y₀, y₁, idxs,
+        ::Type{Val{D}}
+    ) where {D}
+    SciMLBase.linear_interpolant!(out, Θ, dt, y₀, y₁, idxs, Val{D})
+    return out
 end
-function (integrator::OperatorSplittingIntegrator)(tmp, t)
-    return linear_interpolation!(
-        tmp, t, integrator.uprev, integrator.u, integrator.tprev, integrator.t
+
+# The step that was just taken. `integrator.dt` must not be used here: by the time a
+# step is finished `step_accept_controller!` has already overwritten it with the
+# *next* proposal, so it is not the length of the interval `uprev`/`u` span.
+_step_dt(integrator::OperatorSplittingIntegrator) = integrator.t - integrator.tprev
+
+function _interp_theta(integrator::OperatorSplittingIntegrator, t)
+    dt = _step_dt(integrator)
+    # A zero-length interval only happens before the first step, where `uprev == u`
+    # and every Θ gives the same value.
+    return iszero(dt) ? zero(t / oneunit(dt)) : (t - integrator.tprev) / dt
+end
+
+function (integrator::OperatorSplittingIntegrator)(
+        t::Number, ::Type{deriv} = Val{0}; idxs = nothing
+    ) where {deriv}
+    return splitting_interpolant(
+        integrator, integrator.cache,
+        _interp_theta(integrator, t), _step_dt(integrator),
+        integrator.uprev, integrator.u, idxs, deriv
     )
+end
+
+function (integrator::OperatorSplittingIntegrator)(
+        val::AbstractArray, t::Number, ::Type{deriv} = Val{0}; idxs = nothing
+    ) where {deriv}
+    return splitting_interpolant!(
+        val, integrator, integrator.cache,
+        _interp_theta(integrator, t), _step_dt(integrator),
+        integrator.uprev, integrator.u, idxs, deriv
+    )
+end
+
+# ---------------------------------------------------------------------------
+# change_t_via_interpolation!
+# ---------------------------------------------------------------------------
+
+# DiffEqBase's continuous callback path passes the literal `Val{:false}` -- a `Val` of
+# the *Symbol*, not of `false` -- so the flag has to be decoded by dispatch. Testing
+# `if T` the way OrdinaryDiffEqCore does would throw on a Symbol.
+_modify_save_endpoint(::Type{Val{true}}) = true
+_modify_save_endpoint(::Type{Val{T}}) where {T} = false
+
+"""
+    change_t_via_interpolation!(integrator::OperatorSplittingIntegrator, t, modify_save_endpoint = Val{false}, reinitialize_alg = nothing)
+
+Move the integrator back to a time `t` inside the step that was just taken.
+
+`u` is refilled from the step's interpolant and the whole subintegrator tree is
+re-anchored to `t` through [`rollback_children!`](@ref), so every child's state and
+clock stay consistent with the parent (`validate_time_point` asserts the latter).
+
+`integrator.dt` is deliberately left alone: it holds the step size proposed for the
+next step, and the interpolation coordinate is derived from `t - tprev` rather than
+from `dt`.
+"""
+function SciMLBase.change_t_via_interpolation!(
+        integrator::OperatorSplittingIntegrator, t,
+        modify_save_endpoint::Type{Val{T}} = Val{false},
+        reinitialize_alg = nothing
+    ) where {T}
+    if integrator.tdir * t < integrator.tdir * integrator.tprev
+        error("Current interpolant only works between tprev and t")
+    elseif t != integrator.t
+        integrator(integrator.u, t)
+        integrator.t = t
+        # Push the interpolated slices into the children and move their clocks back.
+        rollback_children!(integrator)
+        if _modify_save_endpoint(modify_save_endpoint)
+            solution_endpoint_match_cur_integrator!(integrator)
+        end
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# Saving
+#
+# Only the outermost integrator saves: the inner splits are stages rather than
+# steps, so their intermediate states are not approximations of the split solution
+# at any time point.
+#
+# `saveiter` is the authoritative length of the saved prefix of `sol.t`/`sol.u`.
+# `sol.interp` is a `LinearInterpolation` aliasing those same vectors, so `sol(t)`
+# reproduces this integrator's own interpolant between saved points.
+# ---------------------------------------------------------------------------
+
+_saved_at_current_t(integrator::OperatorSplittingIntegrator) =
+    integrator.saveiter > 0 &&
+    integrator.sol.t[integrator.saveiter] == integrator.t
+
+function _save_current!(integrator::OperatorSplittingIntegrator)
+    integrator.saveiter += 1
+    RecursiveArrayTools.copyat_or_push!(
+        integrator.sol.t, integrator.saveiter, integrator.t
+    )
+    RecursiveArrayTools.copyat_or_push!(
+        integrator.sol.u, integrator.saveiter, integrator.u
+    )
+    return nothing
+end
+
+"""
+    savevalues!(integrator::OperatorSplittingIntegrator, force_save = false, reduce_size = true)
+
+Save the state at the current time point and at any pending `saveat` points that the
+step just taken has passed, returning `(saved, savedexactly)`.
+
+`saveat` points strictly inside the step are filled from the step's interpolant
+(see [`splitting_interpolant`](@ref)), so asking for output never changes the
+sequence of steps and therefore never changes the splitting error. Because the
+generic interpolant is linear, interpolated points are first order accurate even
+when the splitting scheme is second order; pass the times as `tstops` instead to
+have the integrator land on them exactly.
+"""
+function SciMLBase.savevalues!(
+        integrator::OperatorSplittingIntegrator,
+        force_save = false, reduce_size = true
+    )::Tuple{Bool, Bool}
+    saved = false
+    savedexactly = false
+    integrator.save_opts.save_on || return saved, savedexactly
+    (; save_everystep, save_end) = integrator.save_opts
+    tf = integrator.sol.prob.tspan[2]
+
+    # The heaps store raw times and carry the direction in their ordering, so the
+    # comparison is scaled by tdir rather than the stored value.
+    tdir_t = integrator.tdir * integrator.t
+    while !isempty(integrator.saveat) &&
+            integrator.tdir * first(integrator.saveat) <= tdir_t
+        curt = pop!(integrator.saveat)
+        if curt == integrator.t
+            # `save_end` owns the final point; leave it to the postamble.
+            (!save_end && curt == tf) && continue
+            saved = true
+            savedexactly = true
+            _save_current!(integrator)
+        else
+            saved = true
+            integrator.saveiter += 1
+            RecursiveArrayTools.copyat_or_push!(
+                integrator.sol.t, integrator.saveiter, curt
+            )
+            # Freshly allocated by the interpolant, so hand over ownership.
+            RecursiveArrayTools.copyat_or_push!(
+                integrator.sol.u, integrator.saveiter, integrator(curt), false
+            )
+        end
+    end
+
+    if force_save || (
+            save_everystep && !_saved_at_current_t(integrator) &&
+                (save_end || integrator.t != tf)
+        )
+        saved = true
+        savedexactly = true
+        _save_current!(integrator)
+    end
+
+    return saved, savedexactly
+end
+
+# Make sure the final time point is in the solution. Mirrors OrdinaryDiffEqCore's
+# `solution_endpoint_match_cur_integrator!`.
+function solution_endpoint_match_cur_integrator!(integrator::OperatorSplittingIntegrator)
+    integrator.save_opts.save_on || return nothing
+    integrator.save_opts.save_end || return nothing
+    _saved_at_current_t(integrator) && return nothing
+    _save_current!(integrator)
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# Callbacks
+#
+# Callbacks run on the outermost integrator only. A condition evaluated between two
+# inner splits would see a state that is not an approximation of the split solution
+# at any time point -- the splits are stages, not steps -- so there is nothing
+# meaningful for a condition or an `affect!` to act on down there.
+#
+# The heavy lifting (root finding, `save_positions`, `affect!` dispatch) is
+# DiffEqBase's; this is the per-step driver, modelled on OrdinaryDiffEqCore's
+# `handle_callbacks!`. It also owns the plain `saveat` save when no callback saved.
+# ---------------------------------------------------------------------------
+
+# Type-stable dispatch into `DiffEqBase.apply_callback!`: the explicit
+# `if (return) else (rest)` chain compiles to a switch over a heterogeneous tuple.
+@generated function apply_ith_callback!(
+        integrator,
+        time, upcrossing, event_idx, cb_idx,
+        callbacks::NTuple{
+            N,
+            Union{DiffEqBase.ContinuousCallback, DiffEqBase.VectorContinuousCallback},
+        }
+    ) where {N}
+    ex = quote
+        throw(BoundsError(callbacks, cb_idx))
+    end
+    for i in 1:N
+        ex = quote
+            if (cb_idx == $i)
+                return DiffEqBase.apply_callback!(
+                    integrator, callbacks[$i], time, upcrossing, event_idx
+                )
+            else
+                $ex
+            end
+        end
+    end
+    return ex
+end
+
+handle_callbacks!(::SplitSubIntegrator) = nothing
+
+function handle_callbacks!(integrator::OperatorSplittingIntegrator)
+    discrete_callbacks = integrator.callback.discrete_callbacks
+    continuous_callbacks = integrator.callback.continuous_callbacks
+
+    continuous_modified = false
+    discrete_modified = false
+    saved_in_cb = false
+
+    if !(continuous_callbacks isa Tuple{})
+        time, upcrossing, event_occurred, event_idx, idx, _counter =
+            DiffEqBase.find_first_continuous_callback(
+            integrator, continuous_callbacks...
+        )
+        if event_occurred
+            integrator.event_last_time = idx
+            integrator.vector_event_last_time = event_idx
+            continuous_modified, saved_in_cb = apply_ith_callback!(
+                integrator, time, upcrossing, event_idx, idx, continuous_callbacks
+            )
+            # The step was cut at the event and the state may have jumped, so the
+            # controller's error history no longer describes what happens next.
+            reinit_node_controller!(integrator)
+        else
+            # Clearing these is what stops the root finder from nudging `tprev` on a
+            # step that had no event.
+            integrator.event_last_time = 0
+            integrator.vector_event_last_time = 1
+        end
+    end
+
+    if !integrator.force_stepfail && !(discrete_callbacks isa Tuple{})
+        discrete_modified, saved_in_cb = DiffEqBase.apply_discrete_callback!(
+            integrator, discrete_callbacks...
+        )
+    end
+
+    if !saved_in_cb
+        SciMLBase.savevalues!(integrator)
+    end
+
+    integrator.derivative_discontinuity = continuous_modified | discrete_modified
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -1116,7 +1572,17 @@ function SciMLBase.done(integrator::OperatorSplittingIntegrator)
 end
 
 function SciMLBase.postamble!(integrator::OperatorSplittingIntegrator)
-    return DiffEqBase.finalize!(integrator.callback, integrator.u, integrator.t, integrator)
+    # `solve!`, `done` and `check_error!` all call this; only the first one after a
+    # step may run the finalizers and close out the solution.
+    integrator.postamble_done && return nothing
+    integrator.postamble_done = true
+    DiffEqBase.finalize!(integrator.callback, integrator.u, integrator.t, integrator)
+    solution_endpoint_match_cur_integrator!(integrator)
+    # `saveiter` is authoritative: drop whatever a previous, longer run left behind
+    # (a `reinit!` without `erase_sol`).
+    resize!(integrator.sol.t, integrator.saveiter)
+    resize!(integrator.sol.u, integrator.saveiter)
+    return nothing
 end
 
 function __step!(integrator::AnySplitIntegrator)
@@ -1325,7 +1791,7 @@ function _build_child(
         0, 0,           # iter, success_iter
         EEst_val,
         controller_cache,
-        false, false, false,  # force_stepfail, last_step_failed, u_modified
+        false, false, false,  # force_stepfail, last_step_failed, derivative_discontinuity
         SplitSubIntegratorStatus(),
         IntegratorStats(),
         level_cache,
@@ -1412,6 +1878,36 @@ SciMLBase.first_tstop(i::AnySplitIntegrator) = first(i.tstops)
 SciMLBase.pop_tstop!(i::AnySplitIntegrator) = pop!(i.tstops)
 
 DiffEqBase.get_dt(i::AnySplitIntegrator) = i.dt
+
+# Continuous callbacks relax the step size through this after an event.
+# `dtcache` mirrors the standing proposal as a magnitude (see `__init`).
+function SciMLBase.set_proposed_dt!(integrator::OperatorSplittingIntegrator, dt)
+    if integrator.dtcache != abs(dt)
+        integrator.dtcache = abs(dt)
+        if !isadaptive(integrator)
+            integrator.dt = dt
+        end
+    end
+    return nothing
+end
+
+"""
+    terminate!(integrator::OperatorSplittingIntegrator, retcode = ReturnCode.Terminated)
+
+Stop the integration from inside a callback's `affect!`.
+
+Emptying the outermost `tstops` heap is what ends the `solve!` loop and makes
+`done` report completion; the children's heaps are irrelevant once the outer loop
+exits, and `postamble!` still closes out the solution.
+"""
+function SciMLBase.terminate!(
+        integrator::OperatorSplittingIntegrator, retcode = ReturnCode.Terminated
+    )
+    _set_retcode!(integrator, retcode)
+    empty!(integrator.tstops)
+    return nothing
+end
+
 function set_dt!(i::DEIntegrator, dt)
     iszero(dt) && error("dt must be nonzero")
     return i.dt = dt
@@ -1434,12 +1930,13 @@ function DiffEqBase.add_saveat!(i::OperatorSplittingIntegrator, t)
     return nothing
 end
 
-# SciMLBase v3 renamed `u_modified!` → `derivative_discontinuity!`.
+# SciMLBase v3 renamed `u_modified!` → `derivative_discontinuity!`. The flag itself
+# is stored in the `derivative_discontinuity` field, which is the name DiffEqBase's
+# callback machinery reads directly.
 @static if isdefined(DiffEqBase, :u_modified!)
-    DiffEqBase.u_modified!(i::OperatorSplittingIntegrator, bool) = i.u_modified = bool
-    DiffEqBase.u_modified!(i::SplitSubIntegrator, bool) = i.u_modified = bool
+    DiffEqBase.u_modified!(i::AnySplitIntegrator, bool) = i.derivative_discontinuity = bool
 end
 @static if isdefined(SciMLBase, :derivative_discontinuity!)
-    SciMLBase.derivative_discontinuity!(i::OperatorSplittingIntegrator, bool) = i.u_modified = bool
-    SciMLBase.derivative_discontinuity!(i::SplitSubIntegrator, bool) = i.u_modified = bool
+    SciMLBase.derivative_discontinuity!(i::AnySplitIntegrator, bool) =
+        i.derivative_discontinuity = bool
 end

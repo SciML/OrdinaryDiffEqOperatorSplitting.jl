@@ -7,17 +7,22 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     tstops = [filter(t -> t0 < t < tf || tf < t < t0, tstops)..., tf]
     tstops = BinaryHeaps.BinaryHeap{FT, ordering}(tstops)
 
+    # `t0` is excluded and `tf` included, matching OrdinaryDiffEqCore's
+    # `initialize_saveat`: the initial point is owned by `save_start` and the final
+    # one by `save_end`, so leaving them in the heap would duplicate them.
+    tdir = tf > t0 ? one(FT) : -one(FT)
     if isnothing(saveat)
-        saveat = [t0, tf]
+        saveat = FT[]
     elseif saveat isa Number
         saveat > zero(saveat) || error("saveat value must be positive")
-        saveat = tf > t0 ? saveat : -saveat
-        saveat = [t0:saveat:tf..., tf]
+        step = tdir * saveat
+        # `tf` is not appended: the range hits it when it divides the span evenly,
+        # and `save_end` owns the final point otherwise.
+        saveat = collect((t0 + step):step:tf)
     else
-        # We do not need to filter saveat like tstops because the saving
-        # callback will ignore any times that are not between t0 and tf.
-        saveat = collect(saveat)
+        saveat = collect(FT, saveat)
     end
+    saveat = filter(t -> tdir * t0 < tdir * t <= tdir * tf, saveat)
     saveat = BinaryHeaps.BinaryHeap{FT, ordering}(saveat)
 
     return tstops, saveat

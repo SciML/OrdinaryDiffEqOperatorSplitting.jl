@@ -108,3 +108,47 @@ end
     # Done :)
 end
 ```
+
+## Dense output
+
+Saving, `saveat` and continuous callback root-finding all go through a single hook,
+so an algorithm only has to describe how to interpolate *within one of its steps*:
+
+```julia
+function OrdinaryDiffEqOperatorSplitting.splitting_interpolant(
+        integrator, cache::MySimpleFirstOrderCache, Θ, dt, y₀, y₁, idxs, ::Type{Val{D}}
+) where {D}
+    # Θ = (t - tprev) / dt is the step-local coordinate, y₀ = u(tprev), y₁ = u(t).
+    # ...
+end
+
+function OrdinaryDiffEqOperatorSplitting.splitting_interpolant!(
+        out, integrator, cache::MySimpleFirstOrderCache, Θ, dt, y₀, y₁, idxs,
+        ::Type{Val{D}}
+) where {D}
+    # In-place variant; must return `out`.
+end
+```
+
+Both fall back to linear interpolation for any `AbstractOperatorSplittingCache`, so
+implementing them is optional. Note the accuracy consequences: with the linear
+fallback, interpolated output is first order even for a second-order scheme, and
+continuous callback event times are the exact roots of a straight chord across the
+step. Implementing a higher-order interpolant improves saved output *and* event
+location at once.
+
+The reason the fallback is only linear is structural rather than incidental. A
+splitting step advances its children sequentially over staggered subintervals, so at
+any time strictly inside the step the children's own interpolants describe different
+sub-problems evaluated over different intervals, and they do not compose into an
+approximation of the split solution. Only the step endpoints, which the outer
+integrator owns, are states of the full split system.
+
+Two invariants matter when implementing this:
+
+  - `Θ` is derived from `integrator.t - integrator.tprev`, **not** from
+    `integrator.dt`. Once a step is accepted, `step_accept_controller!` has already
+    replaced `dt` with the step size proposed for the *next* step.
+  - Interpolation must not mutate integrator state. `change_t_via_interpolation!`
+    relies on being able to evaluate the interpolant repeatedly (the callback
+    root-finder does so many times per step) before committing to a time.

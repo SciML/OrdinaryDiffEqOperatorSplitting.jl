@@ -32,6 +32,10 @@ run_qa(
                 :get_EEst, :set_EEst!, :get_current_adaptive_order,                      # OrdinaryDiffEqCore
                 :gamma_default, :failfactor_default, :AbstractControllerCache,           # OrdinaryDiffEqCore
                 :promote_tspan,                                                          # SciMLBase
+                # Shared linear interpolation kernels, reused so that the
+                # integrator's own dense output and `sol(t)` (which goes through
+                # SciMLBase's `LinearInterpolation`) cannot drift apart.
+                :linear_interpolant, :linear_interpolant!,                                # SciMLBase
                 # Broadcast extension points a TreeOption implements (src/config_tree.jl).
                 :Broadcasted, :broadcastable, :dotview, :materialize!,                   # Base
             ),

@@ -42,8 +42,9 @@ alg = LieTrotterGodunov(
     (Euler(), Euler())
 )
 
-# Right now OrdinaryDiffEqOperatorSplitting.jl does not implement the SciML solution interface,
-# but we can obtain intermediate solutions via the iterator interface.
+# OrdinaryDiffEqOperatorSplitting.jl implements only part of the SciML solution
+# interface (see "Saving and interpolation" below); intermediate solutions are most
+# directly obtained via the iterator interface.
 integrator = init(prob, alg, dt = 0.1)
 for (u, t) in TimeChoiceIterator(integrator, 0.0:0.5:1.0)
     @show t, u
@@ -64,6 +65,92 @@ for (u, t) in TimeChoiceIterator(integrator, 0.0:0.5:1.0)
     @show t, u
 end
 ```
+
+## Saving and interpolation
+
+`solve!` returns a solution whose `t`/`u` are filled as the integration proceeds, so
+the usual saving keywords work and `sol(t)` interpolates between saved points:
+
+```julia
+integrator = init(prob, alg; dt = 0.1, saveat = 0.25)
+sol = solve!(integrator)
+
+sol.t          # [0.0, 0.25, 0.5, 0.75, 1.0]
+sol(0.3)       # interpolated between the saved points
+```
+
+The supported keywords are `saveat`, `save_everystep` (default `false`),
+`save_start`, `save_end` and `save_on`. They apply to the **outer** integrator only:
+the inner splits are stages rather than steps, so their intermediate states do not
+approximate the split solution at any time point.
+
+`saveat` points that fall strictly inside a step are filled from the step's
+interpolant, so requesting output never changes the sequence of steps and therefore
+never changes the splitting error.
+
+!!! note "The interpolant is first order"
+    A splitting step advances its children sequentially over staggered
+    subintervals, so their individual interpolants do not compose into an
+    approximation of the split solution. The dense output available at the outer
+    level is therefore linear between the step endpoints -- exact for the state a
+    `LieTrotterGodunov` step produces, but only first order for the second-order
+    schemes. If you need output that is accurate to the order of the scheme, pass
+    the times as `tstops` so that the integrator lands on them exactly:
+
+    ```julia
+    sol = solve!(init(prob, alg; dt = 0.1, tstops = [0.25, 0.5], saveat = [0.25, 0.5]))
+    ```
+
+    `dense = true` is rejected: with a linear interpolant, `sol(t)` already
+    reproduces the integrator's own dense output from the saved points, so storing
+    per-step interpolation data would buy nothing.
+
+## Callbacks and events
+
+The standard SciML callbacks work through the `callback` keyword:
+
+```julia
+# Stop as soon as the first component drops below a threshold.
+cb = ContinuousCallback((u, t, integrator) -> u[1] - 0.5, terminate!)
+sol = solve!(init(prob, alg; dt = 0.1, callback = cb))
+```
+
+`DiscreteCallback`, `ContinuousCallback`, `VectorContinuousCallback` and
+`CallbackSet` are all supported, along with `save_positions`, `affect_neg!`,
+`rootfind`, `terminate!` and `derivative_discontinuity!`. Because the machinery is
+DiffEqBase's own, callbacks built on top of it (for instance those in
+DiffEqCallbacks.jl) work too.
+
+!!! note "Callbacks run on the outer integrator only"
+    A condition is evaluated once per **outer** step, after all the operators of
+    that step have been applied. It is never evaluated between two inner splits: a
+    splitting step applies its operators sequentially over staggered subintervals,
+    so the intermediate states are stages and do not approximate the solution of the
+    split system at any time point. There is correspondingly nothing meaningful for
+    a condition to test or an `affect!` to modify at that level.
+
+    A consequence worth knowing: an `affect!` that modifies `integrator.u` is
+    propagated into every subintegrator before the next step, so modifying the state
+    from a callback is safe.
+
+### Accuracy of continuous events
+
+Event times are found by root-finding on the step's interpolant, which is linear
+(see "Saving and interpolation" above). Two consequences:
+
+  - The located event time is second order accurate in the step size, and is the
+    *exact* root of the linear interpolant over the step that brackets it. With
+    large steps -- adaptive splittings can grow the step considerably on smooth
+    problems -- the event time degrades accordingly. Cap it with `dtmax` when event
+    accuracy matters.
+  - An event that occurs and reverses **within a single step** cannot be detected,
+    because a linear interpolant has no interior extremum. Raising `interp_points`
+    does not help for the same reason, so setting `interp_points = 0` on the
+    callback avoids a sweep that cannot find anything the endpoints missed.
+
+Once the event time is located, the state there comes from the same interpolant and
+the whole subintegrator tree is re-anchored to it, so integration resumes
+consistently from the event.
 
 ## Configuring individual subintegrators
 
