@@ -50,14 +50,13 @@ function sync_vectors!(a, b)
 end
 
 """
-    forward_sync_subintegrator!(parent_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+    forward_sync_subintegrator!(parent_integrator::AnySplitIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
 
 This function is responsible of copying the solution and parameters of the parent integrator and the synchronized subintegrators with the information given into the inner integrator.
 If the inner integrator is synchronized with other inner integrators using `sync`, the function `forward_sync_external!` shall be dispatched for `sync`.
 The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
 The `solution_indices` are indices into the parent integrators solution vectors.
 """
-
 function forward_sync_subintegrator!(
         parent::AnySplitIntegrator,
         child::DEIntegrator,
@@ -106,14 +105,13 @@ end
 
 
 """
-    backward_sync_subintegrator!(parent_integrator::OperatorSplittingIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
+    backward_sync_subintegrator!(parent_integrator::AnySplitIntegrator, inner_integrator::DEIntegrator, solution_indices, sync)
 
 This function is responsible of copying the solution of the inner integrator back into parent integrator and the synchronized subintegrators.
 If the inner integrator is synchronized with other inner integrators using `sync`, the function `backward_sync_external!` shall be dispatched for `sync`.
 The `sync` object is passed from the outside and is the main entry point to dispatch custom types on for parameter synchronization.
 The `solution_indices` are indices in the parent integrators solution vectors.
 """
-
 function backward_sync_subintegrator!(
         parent::AnySplitIntegrator,
         child::DEIntegrator,
