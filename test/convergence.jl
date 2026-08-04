@@ -44,21 +44,29 @@ function convergence_rates(f, alg, tspan, ustart, utarget; dts = (0.1, 0.05, 0.0
 end
 
 @testset "Convergence order" begin
-    for (AlgType, expected_order) in (
-            (LieTrotterGodunov, 1),
-            (StrangMarchuk, 2),
-            (PalindromicPairLieTrotterGodunov, 2),
+    # `build` takes the tuple of inner algorithms, so schemes that wrap a base rather
+    # than taking `inner_algs` directly (AdjointPair) fit the same loop. Ruth3 is a
+    # two-operator table, so it sits out the three-operator case.
+    for (name, build, expected_order, supports_three) in (
+            ("LieTrotterGodunov", LieTrotterGodunov, 1, true),
+            ("StrangMarchuk", StrangMarchuk, 2, true),
+            ("PalindromicPairLieTrotterGodunov", PalindromicPairLieTrotterGodunov, 2, true),
+            ("Ruth3", Ruth3, 3, false),
+            ("Yoshida4", Yoshida4, 4, false),
+            ("AdjointPair(Ruth3)", inner -> AdjointPair(Ruth3(inner)), 4, false),
         )
-        cases = (
-            ("two operators", f_two, AlgType((Tsit5(), Tsit5()))),
-            ("three operators", f_three, AlgType((Tsit5(), Tsit5(), Tsit5()))),
-            ("nested", f_nested, AlgType((Tsit5(), AlgType((Tsit5(), Tsit5()))))),
-        )
+        two = ("two operators", f_two, build((Tsit5(), Tsit5())))
+        nested = ("nested", f_nested, build((Tsit5(), build((Tsit5(), Tsit5())))))
+        cases = if supports_three
+            (two, ("three operators", f_three, build((Tsit5(), Tsit5(), Tsit5()))), nested)
+        else
+            (two, nested)
+        end
         directions = (
             ("forward", (0.0, 1.0), u0, uT),
             ("backward", (1.0, 0.0), uT, u0),
         )
-        @testset "$(nameof(AlgType)) | $case | $dir (order $expected_order)" for
+        @testset "$name | $case | $dir (order $expected_order)" for
             (case, f, alg) in cases, (dir, tspan, ustart, utarget) in directions
 
             rates = convergence_rates(f, alg, tspan, ustart, utarget)
@@ -67,4 +75,10 @@ end
             end
         end
     end
+end
+
+@testset "two-operator tables reject other operator counts" begin
+    @test_throws ArgumentError Ruth3((Tsit5(), Tsit5(), Tsit5()))
+    @test_throws ArgumentError Ruth3((Tsit5(),))
+    @test_throws ArgumentError Yoshida4((Tsit5(), Tsit5(), Tsit5()))
 end

@@ -3,5 +3,7 @@
 Strang = "Strang"
 # Citation key for Trotter (Tro:1959:psg) used in docstrings
 Tro = "Tro"
+# David Ketcheson, in the citation key AuzHofKetKoc:2017:psm
+Ket = "Ket"
 # Splitting variable name
 BA = "BA"
