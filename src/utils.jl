@@ -179,6 +179,86 @@ function OrdinaryDiffEqCore.fix_dt_at_bounds!(integrator::AnySplitIntegrator)
     return nothing
 end
 
+"""
+    reverse_direction!(integrator)
+
+Flip an already-initialized integrator's direction of integration in place.
+
+Negating `dt` alone does not work: `fix_dt_at_bounds!` re-signs it to `tdir` and would
+replace it with `+dtmin` before `perform_step!` saw it.
+
+The `tstops`/`saveat`/`d_discontinuities` heaps store `tdir`-scaled times, so negating
+every key re-expresses the same raw times under the new direction -- which inverts the
+heap order, hence the rebuild. Times now *behind* are dropped, because `handle_tstop!`
+errors on an unconsumed stop that `t` has passed.
+"""
+function reverse_direction!(integrator::DEIntegrator)
+    integrator.tdir = -integrator.tdir
+    integrator.dt = -integrator.dt
+    integrator.dtcache = -integrator.dtcache
+    integrator.dtpropose = -integrator.dtpropose
+
+    opts = integrator.opts
+    opts.dtmax = -opts.dtmax
+
+    threshold = integrator.tdir * integrator.t
+    _reverse_time_heap!(opts.tstops, threshold)
+    _reverse_time_heap!(opts.saveat, threshold)
+    _reverse_time_heap!(opts.d_discontinuities, threshold)
+
+    return integrator
+end
+
+function reverse_direction!(sub::SplitSubIntegrator)
+    sub.dt = -sub.dt
+    sub.dtcache = -sub.dtcache
+    sub.tdir = -sub.tdir
+
+    # This heap stores *raw* times and carries the direction in its ordering, which is
+    # part of its type, so unlike a leaf's its keys cannot be re-signed.
+    _drop_times_behind!(sub.tstops, sub.tdir, sub.t)
+
+    # `add_tstop!` propagates eagerly to every descendant, so a child left facing the
+    # old direction would reject the reversed node's next tstop as behind it.
+    _reverse_children!(sub.child_subintegrators)
+
+    return sub
+end
+
+@unroll function _reverse_children!(children::Tuple)
+    @unroll for child in children
+        reverse_direction!(child)
+    end
+end
+
+function _drop_times_behind!(heap, tdir, t)
+    isempty(heap) && return heap
+    old = [pop!(heap)]
+    while !isempty(heap)
+        push!(old, pop!(heap))
+    end
+    threshold = tdir * t
+    for key in old
+        tdir * key > threshold && push!(heap, key)
+    end
+    return heap
+end
+
+function _reverse_time_heap!(heap, threshold)
+    isempty(heap) && return heap
+    # Drain first: the new keys are the negated old ones, so pushing them back into
+    # the heap being read from would corrupt the ordering mid-traversal.
+    old = [pop!(heap)]
+    while !isempty(heap)
+        push!(old, pop!(heap))
+    end
+    for key in old
+        reversed = -key
+        reversed > threshold && push!(heap, reversed)
+    end
+    return heap
+end
+
 # Check time-step information consistency
 validate_time_point(integrator::AnySplitIntegrator) = validate_time_point(integrator, integrator.child_subintegrators)
 function validate_time_point(parent, child::SplitSubIntegrator)

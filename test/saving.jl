@@ -33,6 +33,8 @@ algs() = (
     LieTrotterGodunov((Tsit5(), Tsit5())),
     StrangMarchuk((Tsit5(), Tsit5())),
     PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5())),
+    Ruth3((Tsit5(), Tsit5())),
+    AdjointPair(Ruth3((Tsit5(), Tsit5()))),
 )
 
 function exact(t)

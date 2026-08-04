@@ -816,7 +816,9 @@ function fixed_t_for_floatingpoint_error!(integrator::AnySplitIntegrator, ttmp)
     return if DiffEqBase.has_tstop(integrator)
         tstop = DiffEqBase.first_tstop(integrator)
         if abs(ttmp - tstop) < _snap_window(integrator.t, tstop, integrator.dt)
-            try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop)
+            try_snap_children_to_tstop!.(
+                integrator.child_subintegrators, tstop, integrator.dt
+            )
             tstop
         else
             ttmp
@@ -825,16 +827,20 @@ function fixed_t_for_floatingpoint_error!(integrator::AnySplitIntegrator, ttmp)
         ttmp
     end
 end
-function try_snap_children_to_tstop!(integrator::SplitSubIntegrator, tstop)
-    if abs(tstop - integrator.t) < _snap_window(integrator.t, tstop, integrator.dt)
+# `scale` is the *outer* step size, and stays the outer one all the way down the tree.
+# All the drift being absorbed here was accumulated by subdividing that one step, so it
+# is the right yardstick; a child's own `dt` is whatever fraction it last landed on and
+# can be arbitrarily smaller, collapsing the window below the drift it has to absorb.
+function try_snap_children_to_tstop!(integrator::SplitSubIntegrator, tstop, scale)
+    if abs(tstop - integrator.t) < _snap_window(integrator.t, tstop, scale)
         integrator.t = tstop
     else
         @warn "Failed to snap timestep for integrator $(integrator.t) with parent integrator hitting the tstop $(tstop)."
     end
-    return try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop)
+    return try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop, scale)
 end
-function try_snap_children_to_tstop!(integrator::DEIntegrator, tstop)
-    return if abs(tstop - integrator.t) < _snap_window(integrator.t, tstop, integrator.dt)
+function try_snap_children_to_tstop!(integrator::DEIntegrator, tstop, scale)
+    return if abs(tstop - integrator.t) < _snap_window(integrator.t, tstop, scale)
         integrator.t = tstop
     else
         @warn "Failed to snap timestep for integrator $(integrator.t) with parent integrator hitting the tstop $(tstop)."
@@ -854,7 +860,9 @@ function step_footer!(integrator::AnySplitIntegrator)
         # halves) accumulate ulp-level drift from the parent's exact `t`.
         # Re-anchor children to the parent's canonical time here so the
         # drift cannot accumulate across outer steps.
-        try_snap_children_to_tstop!.(integrator.child_subintegrators, integrator.t)
+        try_snap_children_to_tstop!.(
+            integrator.child_subintegrators, integrator.t, integrator.dt
+        )
         step_accept_controller!(integrator)
         validate_time_point(integrator)
         handle_callbacks!(integrator)   # also does the saving
@@ -1554,11 +1562,10 @@ function advance_solution_by!(
     return
 end
 
-# `dt` stays signed through the splitting tree, following the SciML `step!`
-# convention: the sign has to match the child's own integration direction, which
-# equals the tree's. Advancing a child *against* its direction (negative substeps
-# of higher order compositions) is not supported yet: leaf ODEIntegrators cannot
-# step against the tdir their tspan fixed at construction.
+# `dt` stays signed through the splitting tree, following the SciML `step!` convention:
+# the sign has to match the child's own integration direction. Schemes of order three
+# and above have negative coefficients, so a substep can oppose the tree's direction,
+# and a child's direction is fixed at construction -- hence `reverse_direction!`.
 
 # Recursion dispatch
 function advance_solution_by!(
@@ -1566,13 +1573,26 @@ function advance_solution_by!(
         sub::SplitSubIntegrator,
         dt
     )
-    SciMLBase.step!(sub, dt, true)
+    _step_signed!(sub, dt)
     return nothing
 end
 
 # Leaf dispatch
 function advance_solution_by!(outer::AnySplitIntegrator, child::DEIntegrator, dt)
-    SciMLBase.step!(child, dt, true)
+    _step_signed!(child, dt)
+    return nothing
+end
+
+# Reversing first is also what satisfies `step!`'s own direction guard: once `tdir` is
+# flipped, a negative `dt` agrees with it.
+function _step_signed!(child, dt)
+    if child.tdir * dt < zero(dt)
+        reverse_direction!(child)
+        SciMLBase.step!(child, dt, true)
+        reverse_direction!(child)
+    else
+        SciMLBase.step!(child, dt, true)
+    end
     return nothing
 end
 
