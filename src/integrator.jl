@@ -1355,7 +1355,7 @@ end
 # Step size control
 #
 # A splitting node runs a controller only if it is adaptive and its algorithm
-# provides an error estimate (written to the node's `EEst` by `_perform_step!`);
+# provides an error estimate (reported by `_perform_step!` via `set_EEst!`);
 # its `controller_cache` is `nothing` otherwise. The controllers themselves are
 # the OrdinaryDiffEqCore ones: `setup_controller_cache` resolves a controller's
 # knobs against this algorithm and mints the mutable per-solve state that

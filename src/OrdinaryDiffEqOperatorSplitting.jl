@@ -117,8 +117,8 @@ Advance one node of an operator-splitting tree by `dt`.
 - Synchronize a child before and after advancing it.
 - Leave `parent.uprev` unchanged; rejection restores the node from that buffer.
 - Set `parent.force_stepfail = true` and return immediately when a child fails.
-- For adaptive algorithms, set `parent.EEst` to the tolerance-scaled local error
-  estimate when `parent.controller_cache !== nothing`.
+- For adaptive algorithms, pass the tolerance-scaled local error estimate to
+  `OrdinaryDiffEqCore.set_EEst!` when `parent.controller_cache !== nothing`.
 
 This is a developer extension API, not a supported end-user API.
 """

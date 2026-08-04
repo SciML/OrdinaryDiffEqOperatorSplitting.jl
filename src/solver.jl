@@ -282,7 +282,7 @@ function _perform_step!(
         (; abstol, reltol, internalnorm) = parent.opts
         @. uforward = (parent.u - uforward) /
             (abstol + max(abs(parent.u), abs(parent.uprev)) * reltol)
-        parent.EEst = internalnorm(uforward, parent.t + dt)
+        OrdinaryDiffEqCore.set_EEst!(parent, internalnorm(uforward, parent.t + dt))
     end
     return
 end

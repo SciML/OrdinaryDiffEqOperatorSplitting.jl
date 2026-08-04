@@ -157,9 +157,9 @@ itself adaptive and produces an error estimate. Such an algorithm has to
 1. define `SciMLBase.isadaptive(::MyAlgorithm) = true`,
 2. define [`OrdinaryDiffEqOperatorSplitting.alg_adaptive_order`](@ref), the order of
    its error estimator, and
-3. write the tolerance-scaled error estimate to `parent.EEst` at the end of
-    `_perform_step!`, following the OrdinaryDiffEq convention that a step is accepted
-    when `EEst <= 1`.
+3. hand the tolerance-scaled error estimate to `OrdinaryDiffEqCore.set_EEst!` at the
+    end of `_perform_step!`, following the OrdinaryDiffEq convention that a step is
+    accepted when the estimate is `<= 1`.
 
 Only do the last step when `parent.controller_cache !== nothing`: the node may have
 been configured non-adaptive, in which case no controller consumes the estimate. The
@@ -169,9 +169,13 @@ tolerances and the norm to scale with live in `parent.opts`:
 if parent.controller_cache !== nothing
     (; abstol, reltol, internalnorm) = parent.opts
     @. residual = error_of_the_step / (abstol + max(abs(parent.u), abs(parent.uprev)) * reltol)
-    parent.EEst = internalnorm(residual, parent.t + dt)
+    OrdinaryDiffEqCore.set_EEst!(parent, internalnorm(residual, parent.t + dt))
 end
 ```
+
+`set_EEst!` and its counterpart `OrdinaryDiffEqCore.get_EEst` are the public
+OrdinaryDiffEqCore interface for the estimate; go through them rather than touching
+the `EEst` field, whose location on the integrator is an implementation detail.
 
 See [`PalindromicPairLieTrotterGodunov`](@ref) in `src/solver.jl` for a complete
 example, and [Adaptive time stepping](@ref) for how the two layers of adaptivity
