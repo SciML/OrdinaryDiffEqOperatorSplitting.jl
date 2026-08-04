@@ -33,6 +33,7 @@ end
         # the average stays order p, and the difference is no longer an error estimate.
         @test AdjointPair(Ruth3((Tsit5(), Tsit5()))) isa AdjointPair
         @test_throws ArgumentError AdjointPair(StrangMarchuk((Tsit5(), Tsit5())))
+        @test_throws ArgumentError AdjointPair(Yoshida4((Tsit5(), Tsit5())))
     end
 
     @testset "the pair raises the order by one" begin

@@ -34,6 +34,18 @@ fsplit = GenericSplitFunction((ODEFunction(odeA), ODEFunction(odeB)), (dofs, dof
         @test coefficients(alg) isa SplittingCoefficients
     end
 
+    @testset "Yoshida4's merged table carries a zero coefficient" begin
+        # Merging the adjacent flows the triple jump leaves next to each other is what
+        # brings it down to eight evaluations, and it zeroes the last stage's second
+        # coefficient. Its convergence in test/convergence.jl is therefore also the
+        # coverage for the zero-coefficient skip path.
+        table = coefficients(Yoshida4((Tsit5(), Tsit5()))).a
+        @test order(Yoshida4((Tsit5(), Tsit5()))) == 4
+        @test length(table) == 4
+        @test count(iszero, Iterators.flatten(table)) == 1
+        @test iszero(table[end][end])
+    end
+
     @testset "tables stay compile-time constants" begin
         # The stage count is a type parameter derived from `length`, and `@unroll` can
         # only unroll the stage loop if that survives inference. Lie-Trotter's table is
