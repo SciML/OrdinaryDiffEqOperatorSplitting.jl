@@ -53,7 +53,7 @@ include("solver.jl")
 include("utils.jl")
 
 export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov, StrangMarchuk,
-    PalindromicPairLieTrotterGodunov, Ruth3, AdjointPair
+    PalindromicPairLieTrotterGodunov, Ruth3, Yoshida4, AdjointPair
 export SplitNode, TreeOption
 
 include("precompilation.jl")

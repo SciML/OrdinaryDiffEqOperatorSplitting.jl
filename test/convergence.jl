@@ -52,6 +52,7 @@ end
             ("StrangMarchuk", StrangMarchuk, 2, true),
             ("PalindromicPairLieTrotterGodunov", PalindromicPairLieTrotterGodunov, 2, true),
             ("Ruth3", Ruth3, 3, false),
+            ("Yoshida4", Yoshida4, 4, false),
             ("AdjointPair(Ruth3)", inner -> AdjointPair(Ruth3(inner)), 4, false),
         )
         two = ("two operators", f_two, build((Tsit5(), Tsit5())))
@@ -76,7 +77,8 @@ end
     end
 end
 
-@testset "Ruth3 rejects operator counts its table cannot address" begin
+@testset "two-operator tables reject other operator counts" begin
     @test_throws ArgumentError Ruth3((Tsit5(), Tsit5(), Tsit5()))
     @test_throws ArgumentError Ruth3((Tsit5(),))
+    @test_throws ArgumentError Yoshida4((Tsit5(), Tsit5(), Tsit5()))
 end

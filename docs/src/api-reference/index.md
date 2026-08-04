@@ -19,6 +19,7 @@ LieTrotterGodunov
 StrangMarchuk
 PalindromicPairLieTrotterGodunov
 Ruth3
+Yoshida4
 AdjointPair
 ```
 
