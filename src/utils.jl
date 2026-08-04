@@ -7,16 +7,17 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     tstops = [filter(t -> t0 < t < tf || tf < t < t0, tstops)..., tf]
     tstops = BinaryHeaps.BinaryHeap{FT, ordering}(tstops)
 
-    if isnothing(saveat)
-        saveat = [t0, tf]
+    # Keep `t0 < t <= tf` in tdir-space: `save_start` owns the initial point and
+    # `save_end` the final one, so leaving either in the heap would duplicate it.
+    tdir = tf > t0 ? one(FT) : -one(FT)
+    saveat = if isnothing(saveat)
+        FT[]
     elseif saveat isa Number
         saveat > zero(saveat) || error("saveat value must be positive")
-        saveat = tf > t0 ? saveat : -saveat
-        saveat = [t0:saveat:tf..., tf]
+        step = tdir * saveat
+        collect((t0 + step):step:tf)
     else
-        # We do not need to filter saveat like tstops because the saving
-        # callback will ignore any times that are not between t0 and tf.
-        saveat = collect(saveat)
+        filter(t -> tdir * t0 < tdir * t <= tdir * tf, collect(FT, saveat))
     end
     saveat = BinaryHeaps.BinaryHeap{FT, ordering}(saveat)
 
@@ -75,14 +76,9 @@ function forward_sync_subintegrator!(
 end
 
 # Tell a leaf integrator that its state was changed from the outside so it discards
-# FSAL information. SciMLBase v3 renamed `u_modified!` → `derivative_discontinuity!`;
-# call the appropriate name based on which SciMLBase is loaded.
+# FSAL information.
 function mark_state_modified!(child::DEIntegrator)
-    @static if isdefined(SciMLBase, :derivative_discontinuity!)
-        SciMLBase.derivative_discontinuity!(child, true)
-    else
-        SciMLBase.u_modified!(child, true)
-    end
+    SciMLBase.derivative_discontinuity!(child, true)
     return nothing
 end
 

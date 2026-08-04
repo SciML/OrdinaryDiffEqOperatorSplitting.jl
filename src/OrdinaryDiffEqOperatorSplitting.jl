@@ -42,6 +42,7 @@ abstract type AbstractOperatorSplittingAlgorithm end
 abstract type AbstractOperatorSplittingCache end
 
 @inline SciMLBase.isadaptive(::AbstractOperatorSplittingAlgorithm) = false
+@inline SciMLBase.isdiscrete(::AbstractOperatorSplittingAlgorithm) = false
 @inline isdtchangeable(alg::AbstractOperatorSplittingAlgorithm) = all(isdtchangeable.(alg.inner_algs))
 
 include("function.jl")

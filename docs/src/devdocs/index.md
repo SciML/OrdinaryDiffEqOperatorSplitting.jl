@@ -108,3 +108,42 @@ end
     # Done :)
 end
 ```
+
+## Dense output
+
+Saving, `saveat` and continuous callback root-finding all go through a single hook,
+so an algorithm only has to describe how to interpolate *within one of its steps*:
+
+```julia
+function OrdinaryDiffEqOperatorSplitting.splitting_interpolant(
+        integrator, cache::MySimpleFirstOrderCache, Θ, dt, y₀, y₁, idxs, ::Type{Val{D}}
+) where {D}
+    # Θ = (t - tprev) / dt is the step-local coordinate, y₀ = u(tprev), y₁ = u(t).
+    # ...
+end
+
+function OrdinaryDiffEqOperatorSplitting.splitting_interpolant!(
+        out, integrator, cache::MySimpleFirstOrderCache, Θ, dt, y₀, y₁, idxs,
+        ::Type{Val{D}}
+) where {D}
+    # In-place variant; must return `out`.
+end
+```
+
+Both fall back to linear interpolation for any `AbstractOperatorSplittingCache`, so
+implementing them is optional -- but with the fallback, saved output is first order
+even for a second-order scheme, and continuous callback event times are the exact
+roots of a straight chord across the step. One method improves both.
+
+The fallback is linear for a structural reason, and it is the same reason saving and
+callbacks live on the outer integrator alone: a splitting step advances its children
+sequentially over staggered subintervals, so a child's own interpolant describes a
+different sub-problem over a different interval, and they do not compose into an
+approximation of the split solution. Only the step endpoints, which the outer
+integrator owns, are states of the full split system -- an inner split is a stage,
+not a step.
+
+When implementing this, note that `Θ` is derived from
+`integrator.t - integrator.tprev`, **not** from `integrator.dt`: once a step is
+accepted, `step_accept_controller!` has already replaced `dt` with the step size
+proposed for the *next* step.
