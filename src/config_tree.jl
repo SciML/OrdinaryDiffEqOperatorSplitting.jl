@@ -210,17 +210,17 @@ Base.setindex!(opt::TreeOption, v, node::SplitNode) =
     TreeOptionSubtree
 
 The target of a broadcast assignment into a [`TreeOption`](@ref), produced by
-`Base.dotview`. Assigning into it writes one value to a node and all of its
-descendants.
+`Base.Broadcast.dotview`. Assigning into it writes one value to a node and all
+of its descendants.
 """
 struct TreeOptionSubtree{T}
     node::TreeOption{T}
 end
 
-Base.dotview(opt::TreeOption) = TreeOptionSubtree(opt)
-Base.dotview(opt::TreeOption, i::Integer, is::Integer...) =
+Base.Broadcast.dotview(opt::TreeOption) = TreeOptionSubtree(opt)
+Base.Broadcast.dotview(opt::TreeOption, i::Integer, is::Integer...) =
     TreeOptionSubtree(_option_node(opt, _path(i, is...)))
-Base.dotview(opt::TreeOption, node::SplitNode) =
+Base.Broadcast.dotview(opt::TreeOption, node::SplitNode) =
     TreeOptionSubtree(_option_node(opt, node.path))
 
 const _Broadcasted = Base.Broadcast.Broadcasted
@@ -228,14 +228,14 @@ const _Broadcasted = Base.Broadcast.Broadcasted
 # A TreeOption is not a collection as far as broadcasting is concerned. Without this
 # the default `broadcastable` tries to `collect` it, and `opt .op= x` fails with a
 # MethodError about iteration instead of the explanation in `_broadcast_value`.
-Base.broadcastable(opt::TreeOption) = Ref(opt)
+Base.Broadcast.broadcastable(opt::TreeOption) = Ref(opt)
 
 # Broadcast assignment into a TreeOption only ever means "give every node of this
 # subtree the same value". Anything else that lowers to the same call is rejected
 # rather than silently given a made up meaning -- see `_broadcast_value`.
-Base.materialize!(dest::TreeOptionSubtree, bc::_Broadcasted) =
+Base.Broadcast.materialize!(dest::TreeOptionSubtree, bc::_Broadcasted) =
     _fill_subtree!(dest.node, _broadcast_value(bc))
-Base.materialize!(dest::TreeOption, bc::_Broadcasted) =
+Base.Broadcast.materialize!(dest::TreeOption, bc::_Broadcasted) =
     _fill_subtree!(dest, _broadcast_value(bc))
 
 function _broadcast_value(bc::_Broadcasted)

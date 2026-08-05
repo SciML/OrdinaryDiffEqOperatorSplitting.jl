@@ -125,11 +125,11 @@ PPLTG = PalindromicPairLieTrotterGodunov
         leaf = integ.child_subintegrators[2]
         leaf.last_stepfail = true
         @test SciMLBase.check_error(leaf) == ReturnCode.ConvergenceFailure
-        @test OS._child_failed(leaf)     # the eager detection sees it ...
+        @test OS.child_failed(leaf)     # the eager detection sees it ...
 
         OS.reject_step!(integ)           # ... and the retry's rollback clears it
         @test !leaf.last_stepfail
-        @test !OS._child_failed(leaf)
+        @test !OS.child_failed(leaf)
         @test SciMLBase.check_error(leaf) == ReturnCode.Success
     end
 

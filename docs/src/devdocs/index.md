@@ -1,5 +1,11 @@
 # Developer documentation
 
+!!! warning
+    This page specifies developer extension APIs for packages implementing
+    operator-splitting solvers. They are versioned for the OrdinaryDiffEq ecosystem,
+    but are not supported end-user APIs. Application code should use the APIs in the
+    API Reference instead.
+
 ## Synchronizers API
 
 A key part of operator splitting algorithms is the synchronization logic. Parameters of one subproblem might need to be kept in sync with the solution of other subproblems and vice versa. To handle this efficiently OrdinaryDiffEqOperatorSplitting.jl provides a small set of utils.
@@ -8,6 +14,8 @@ A key part of operator splitting algorithms is the synchronization logic. Parame
 OrdinaryDiffEqOperatorSplitting.NoExternalSynchronization
 OrdinaryDiffEqOperatorSplitting.forward_sync_subintegrator!
 OrdinaryDiffEqOperatorSplitting.backward_sync_subintegrator!
+OrdinaryDiffEqOperatorSplitting.forward_sync_external!
+OrdinaryDiffEqOperatorSplitting.backward_sync_external!
 OrdinaryDiffEqOperatorSplitting.need_sync
 OrdinaryDiffEqOperatorSplitting.sync_vectors!
 ```
@@ -37,77 +45,141 @@ tspan = (0.0, 1.0)
 prob = OperatorSplittingProblem(f, u0, tspan)
 ```
 
-## Adding Solvers
+## Solver extension API
+
+```@docs
+OrdinaryDiffEqOperatorSplitting.AbstractOperatorSplittingAlgorithm
+OrdinaryDiffEqOperatorSplitting.AbstractOperatorSplittingCache
+OrdinaryDiffEqOperatorSplitting.init_cache
+OrdinaryDiffEqOperatorSplitting._perform_step!
+OrdinaryDiffEqOperatorSplitting.advance_solution_by!
+OrdinaryDiffEqOperatorSplitting.child_failed
+OrdinaryDiffEqOperatorSplitting.alg_adaptive_order
+OrdinaryDiffEqOperatorSplitting.splitting_interpolant
+OrdinaryDiffEqOperatorSplitting.splitting_interpolant!
+```
+
+## Adding solvers
 
 !!! warning
     
-    The API is not stable yet and subject to breaking changes.
+    This is a developer extension API. It may change independently of the end-user
+    API and should not be used in application code.
 
-To add a new solver just define two new structs, one for the algorithm description and one for the algorithm cache and dispatch internal functions, as follows:
+To add a new solver, define two structs -- one describing the algorithm, one for its
+cache -- and dispatch the developer extension functions on them:
+
+- `init_cache(f, alg; uprev, u)` builds the cache for one node of the splitting tree.
+- `_perform_step!(parent, children, cache, dt)` advances that node by `dt`.
+- `alg_adaptive_order(alg)`, only if the algorithm is adaptive (see below).
+
+The algorithm struct has to carry the inner algorithms of the problem sequence in a
+field named `inner_algs`, because that is how the tree of integrators is built
+alongside the tree of split functions. The cache is where a scheme keeps the buffers
+it needs beyond `u`/`uprev`.
 
 ```julia
 using SciMLBase, OrdinaryDiffEqOperatorSplitting
+import OrdinaryDiffEqOperatorSplitting as OS
+
 struct MySimpleFirstOrderAlgorithm{InnerAlgorithmTypes} <:
-       OrdinaryDiffEqOperatorSplitting.AbstractOperatorSplittingAlgorithm
-    inner_algs::InnerAlgorithmTypes # Tuple of solver for the problem sequence
+    OS.AbstractOperatorSplittingAlgorithm
+    inner_algs::InnerAlgorithmTypes # Tuple of solvers for the problem sequence
 end
 
-struct MySimpleFirstOrderCache{uType, uprevType, iiType} <:
-       OrdinaryDiffEqOperatorSplitting.AbstractOperatorSplittingCache
+struct MySimpleFirstOrderCache{uType, uprevType} <: OS.AbstractOperatorSplittingCache
     u::uType
     uprev::uprevType
-    inner_caches::iiType
 end
 
-function OrdinaryDiffEqOperatorSplitting.init_cache(
+function OS.init_cache(
         f::GenericSplitFunction, alg::MySimpleFirstOrderAlgorithm;
-        uprev::AbstractArray, u::AbstractVector,
-        inner_caches,
-        alias_uprev = true,
-        alias_u = false
-)
-    @assert length(inner_caches) == 2
-    _uprev = alias_uprev ? uprev : SciMLBase.recursivecopy(uprev)
-    _u = alias_u ? u : SciMLBase.recursivecopy(u)
-    return MySimpleFirstOrderAlgorithmCache(_u, _uprev, inner_caches)
-end
-
-@inline function OrdinaryDiffEqOperatorSplitting.advance_solution_to!(
-        outer_integrator::OperatorSplittingIntegrator, subintegrators::Tuple,
-        solution_indices::Tuple, synchronizers::Tuple,
-        cache::MySimpleFirstOrderAlgorithmCache, tnext)
-    # We assume that the integrators are already synced
-    (;inner_caches) = cache
-
-    # Advance first subproblem
-    OrdinaryDiffEqOperatorSplitting.forward_sync_subintegrator!(
-        outer_integrator, subintegrators[1], solution_indices[1], synchronizers[1])
-    OrdinaryDiffEqOperatorSplitting.advance_solution_to!(
-        outer_integrator, subintegrators[1], solution_indices[1],
-        synchronizers[1], inner_caches[1], tnext)
-    if subintegrators[1].sol.retcode ∉
-       (SciMLBase.ReturnCode.Default, SciMLBase.ReturnCode.Success)
-        return
-    end
-    OrdinaryDiffEqOperatorSplitting.backward_sync_subintegrator!(
-        outer_integrator, subintegrators[1], solution_indices[1], synchronizers[1])
-
-    # Advance second subproblem
-    OrdinaryDiffEqOperatorSplitting.forward_sync_subintegrator!(
-        outer_integrator, subintegrators[2], solution_indices[2], synchronizers[2])
-    OrdinaryDiffEqOperatorSplitting.advance_solution_to!(
-        outer_integrator, subintegrators[2], solution_indices[2],
-        synchronizers[2], inner_caches[2], tnext)
-    if subintegrators[2].sol.retcode ∉
-       (SciMLBase.ReturnCode.Default, SciMLBase.ReturnCode.Success)
-        return
-    end
-    OrdinaryDiffEqOperatorSplitting.backward_sync_subintegrator!(
-        outer_integrator, subintegrators[2], solution_indices[2], synchronizers[2])
-
-    # Done :)
+        uprev::AbstractArray, u::AbstractVector
+    )
+    # `u` and `uprev` are the buffers of *this* node; the integrator owns them and
+    # the cache only keeps references. Allocate additional buffers with
+    # `similar(u)` if the scheme needs them.
+    return MySimpleFirstOrderCache(u, uprev)
 end
 ```
+
+The stepping function receives the node whose step is being performed (`parent`) and
+the tuple of its child integrators, which may be leaf `DEIntegrator`s or nested
+`SplitSubIntegrator`s -- the same code handles both. Everything else a step needs is
+reachable from `parent`: `parent.child_solution_indices[i]` are the indices of the
+`i`-th child in this node's solution vector, and `parent.child_synchronizers[i]` is its
+synchronizer.
+
+Advancing one child means synchronizing into it, stepping it, and synchronizing back:
+
+```julia
+function advance_one_child!(parent, child, i, dt)
+    idxs = parent.child_solution_indices[i]
+    sync = parent.child_synchronizers[i]
+
+    OS.forward_sync_subintegrator!(parent, child, idxs, sync)
+    OS.advance_solution_by!(parent, child, dt)
+    if OS.child_failed(child)
+        # A failed child must stop the remaining stages of this step.
+        parent.force_stepfail = true
+        return
+    end
+    OS.backward_sync_subintegrator!(parent, child, idxs, sync)
+    return
+end
+
+function OS._perform_step!(
+        parent, children::Tuple, cache::MySimpleFirstOrderCache, dt
+    )
+    advance_one_child!(parent, children[1], 1, dt)
+    parent.force_stepfail && return
+
+    advance_one_child!(parent, children[2], 2, dt)
+    parent.force_stepfail && return
+
+    # Done :) The solution of the step is in `parent.u`; `parent.uprev` holds the
+    # state at the beginning of the step and must be left untouched, as rollback
+    # after a rejected step restores from it.
+    return
+end
+```
+
+This example is written for exactly two operators. A scheme that works for any number
+of them loops over `children` with `Unrolled.@unroll`, as the built-in algorithms in
+`src/solver.jl` do; a plain `for` loop over the heterogeneously typed tuple would be
+type unstable.
+
+### Adaptive algorithms
+
+A splitting node runs a step size controller only if its algorithm both declares
+itself adaptive and produces an error estimate. Such an algorithm has to
+
+1. define `SciMLBase.isadaptive(::MyAlgorithm) = true`,
+2. define [`OrdinaryDiffEqOperatorSplitting.alg_adaptive_order`](@ref), the order of
+   its error estimator, and
+3. hand the tolerance-scaled error estimate to `OrdinaryDiffEqCore.set_EEst!` at the
+    end of `_perform_step!`, following the OrdinaryDiffEq convention that a step is
+    accepted when the estimate is `<= 1`.
+
+Only do the last step when `parent.controller_cache !== nothing`: the node may have
+been configured non-adaptive, in which case no controller consumes the estimate. The
+tolerances and the norm to scale with live in `parent.opts`:
+
+```julia
+if parent.controller_cache !== nothing
+    (; abstol, reltol, internalnorm) = parent.opts
+    @. residual = error_of_the_step / (abstol + max(abs(parent.u), abs(parent.uprev)) * reltol)
+    OrdinaryDiffEqCore.set_EEst!(parent, internalnorm(residual, parent.t + dt))
+end
+```
+
+`set_EEst!` and its counterpart `OrdinaryDiffEqCore.get_EEst` are the public
+OrdinaryDiffEqCore interface for the estimate; go through them rather than touching
+the `EEst` field, whose location on the integrator is an implementation detail.
+
+See [`PalindromicPairLieTrotterGodunov`](@ref) in `src/solver.jl` for a complete
+example, and [Adaptive time stepping](@ref) for how the two layers of adaptivity
+interact.
 
 ## Dense output
 
