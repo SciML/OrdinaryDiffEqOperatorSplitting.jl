@@ -165,6 +165,114 @@ $[L_1, L_2] = L_1 L_2 - L_2 L_1$ to cancel, leaving a local truncation error
 of $O(t^3)$ and hence second-order global accuracy. The same argument extends to
 the general $N$-operator palindromic scheme.
 
+## [Higher order splittings](@id theory_higher-order)
+
+Lie-Trotter-Godunov and Strang-Marchuk are both instances of a more general
+construction. A splitting scheme applies the sub-flows in a fixed sequence, each for
+a fixed fraction of the step, so for $N$ operators it is completely described by an
+$S \times N$ table of coefficients $a_{ji}$: stage $j$ advances operator $i$ by
+$a_{ji} \Delta t$. In the linear two-operator case,
+
+```math
+\mathcal{S}(\Delta t) = \prod_{j=1}^{S} e^{a_{jN} \Delta t L_N} \cdots e^{a_{j1} \Delta t L_1} \, .
+```
+
+Lie-Trotter-Godunov is the one-stage table $a = (1, 1)$ and Strang-Marchuk is the
+two-stage table $a = \bigl((\tfrac{1}{2}, 1), (\tfrac{1}{2}, 0)\bigr)$.
+
+Each operator's coefficients must sum to one,
+
+```math
+\sum_{j=1}^{S} a_{ji} = 1 \quad \text{for every } i \, ,
+```
+
+since otherwise the scheme does not even advance every sub-problem by $\Delta t$.
+This is the consistency condition, and it is the only one this package checks when a
+table is constructed. Attaining order $p$ imposes further conditions, one per
+independent commutator up to order $p$, obtained by matching the
+Baker-Campbell-Hausdorff expansion of the product above against that of
+$e^{\Delta t (L_1 + L_2)}$ — the same computation as in the two analyses above,
+carried further.
+
+### Composition: the triple jump
+
+Solving the order conditions directly gets unpleasant quickly. A cheaper route is
+*composition*: build a higher-order scheme out of a symmetric one of lower order.
+If $\mathcal{S}_2$ is any symmetric second-order scheme, then
+
+```math
+\mathcal{S}_4(\Delta t) = \mathcal{S}_2(w_1 \Delta t) \, \mathcal{S}_2(w_0 \Delta t) \, \mathcal{S}_2(w_1 \Delta t)
+```
+
+is symmetric for any weights, and hence of even order. It is of order four as soon
+as the weights satisfy
+
+```math
+2 w_1 + w_0 = 1 \, , \qquad 2 w_1^3 + w_0^3 = 0 \, ,
+```
+
+the first being consistency and the second the cancellation of the third-order term.
+The real solution is $w_1 = 1/(2 - 2^{1/3})$ and $w_0 = -2^{1/3} w_1$, giving
+Yoshida's "triple jump" [Yos:1990:cho](@cite), implemented here as
+[`Yoshida4`](@ref). Writing the three Strang steps out as a flat sequence of flows
+and merging the adjacent flows of the same operator that the composition leaves next
+to each other collapses nine flows to eight — which is exactly the four-stage table
+`Yoshida4` carries, its last stage having a zero second coefficient.
+
+### The order barrier and negative coefficients
+
+Note that $w_0 < 0$ above. This is not an artifact of the construction: no splitting
+scheme of order greater than two has all coefficients positive
+[She:1989:slp,Suz:1991:gtf](@cite). Any third- or higher-order splitting therefore
+integrates some sub-problem *backward in time* during part of every step, which has
+two practical consequences.
+
+First, the sub-problems must admit a backward flow. For a parabolic sub-problem —
+diffusion, say — the backward evolution is ill-posed and the negative sub-steps are
+violently unstable, so on a reaction-diffusion system the higher-order schemes here
+are not usable on the diffusion operator, however attractive their order. This is
+the reason Strang-Marchuk remains the workhorse despite being only second order.
+
+Second, the implementation has to actually run its sub-integrators backwards. An
+inner integrator fixes its direction of integration at construction, so a negative
+sub-step temporarily reverses it; see the developer documentation for the details.
+
+### Adjoint pairs
+
+The *adjoint* of a scheme is
+
+```math
+\mathcal{S}^*(\Delta t) = \mathcal{S}(-\Delta t)^{-1} \, ,
+```
+
+which for a splitting scheme is simply its whole sequence of flows run in reverse
+order, every coefficient keeping its sign and its operator. A scheme is symmetric
+exactly when $\mathcal{S}^* = \mathcal{S}$, which is why Strang-Marchuk — a
+palindrome — gains an order over Lie-Trotter-Godunov.
+
+If $\mathcal{S}$ has order $p$ with leading local error $C \Delta t^{p+1}$, then
+$\mathcal{S}^*$ has the same order with leading error $(-1)^p C \Delta t^{p+1}$. For
+**odd** $p$ the two signs oppose, so running the pair from the same initial value
+gives, at twice the cost of one scheme,
+
+```math
+\frac{\mathcal{S} + \mathcal{S}^*}{2} \quad \text{of order } p+1 \, ,
+\qquad
+\frac{\mathcal{S} - \mathcal{S}^*}{2} \quad \text{an estimate of the local error of } \mathcal{S} \, ,
+```
+
+the latter being asymptotically correct as $\Delta t \to 0$
+[AuzHofKetKoc:2017:psm](@cite). This is the Milne device applied to a scheme and its
+adjoint, and it is what makes the splitting error itself estimable and hence the
+splitting step adaptive — see [Adaptive time stepping](@ref). The construction is
+[`AdjointPair`](@ref); at $p = 1$, with Lie-Trotter-Godunov as the base, it is the
+pair of mutually reversed sequences implemented directly as
+[`PalindromicPairLieTrotterGodunov`](@ref).
+
+For even $p$ the two leading terms are *equal* rather than opposite: averaging
+cancels nothing and the difference is not an error estimate, which is why
+[`AdjointPair`](@ref) rejects an even-order base scheme.
+
 ## References
 
 ```@bibliography

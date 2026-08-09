@@ -1,15 +1,25 @@
-# helper function for setting up min/max heaps for tstops and saveat
+"""
+    tstops_and_saveat_heaps(t0, tf, tstops, saveat)
+
+Build the `tstops` and `saveat` heaps of a node covering `t0` to `tf`.
+
+Both store **`tdir`-scaled** times, the convention OrdinaryDiffEqCore's
+`initialize_tstops` follows, so that "the next one" is always the heap minimum and
+"ahead of `t`" is always `key > tdir * t`, whichever way the node integrates. It is
+also what lets [`reverse_direction!`](@ref) flip a node by re-signing its keys: the
+alternative, storing raw times and encoding the direction in the heap's ordering,
+puts the direction in the heap's *type*, where it cannot be changed in place.
+"""
 function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     FT = typeof(tf)
-    ordering = tf > t0 ? BinaryHeaps.FasterForward : BinaryHeaps.FasterReverse
+    tdir = tf > t0 ? one(FT) : -one(FT)
 
     # ensure that tstops includes tf and only has values ahead of t0
     tstops = [filter(t -> t0 < t < tf || tf < t < t0, tstops)..., tf]
-    tstops = BinaryHeaps.BinaryHeap{FT, ordering}(tstops)
+    tstops = BinaryHeaps.BinaryHeap{FT, BinaryHeaps.FasterForward}(tdir .* tstops)
 
     # Keep `t0 < t <= tf` in tdir-space: `save_start` owns the initial point and
     # `save_end` the final one, so leaving either in the heap would duplicate it.
-    tdir = tf > t0 ? one(FT) : -one(FT)
     saveat = if isnothing(saveat)
         FT[]
     elseif saveat isa Number
@@ -19,7 +29,7 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     else
         filter(t -> tdir * t0 < tdir * t <= tdir * tf, collect(FT, saveat))
     end
-    saveat = BinaryHeaps.BinaryHeap{FT, ordering}(saveat)
+    saveat = BinaryHeaps.BinaryHeap{FT, BinaryHeaps.FasterForward}(tdir .* saveat)
 
     return tstops, saveat
 end
@@ -272,6 +282,10 @@ The `tstops`/`saveat`/`d_discontinuities` heaps store `tdir`-scaled times, so ne
 every key re-expresses the same raw times under the new direction -- which inverts the
 heap order, hence the rebuild. Times now *behind* are dropped, because `handle_tstop!`
 errors on an unconsumed stop that `t` has passed.
+
+A `SplitSubIntegrator` follows the same convention (see
+[`tstops_and_saveat_heaps`](@ref)) and is reversed the same way; it just has fewer
+things to reverse.
 """
 function reverse_direction!(integrator::DEIntegrator)
     integrator.tdir = -integrator.tdir
@@ -291,13 +305,11 @@ function reverse_direction!(integrator::DEIntegrator)
 end
 
 function reverse_direction!(sub::SplitSubIntegrator)
+    sub.tdir = -sub.tdir
     sub.dt = -sub.dt
     sub.dtcache = -sub.dtcache
-    sub.tdir = -sub.tdir
 
-    # This heap stores *raw* times and carries the direction in its ordering, which is
-    # part of its type, so unlike a leaf's its keys cannot be re-signed.
-    _drop_times_behind!(sub.tstops, sub.tdir, sub.t)
+    _reverse_time_heap!(sub.tstops, sub.tdir * sub.t)
 
     # `add_tstop!` propagates eagerly to every descendant, so a child left facing the
     # old direction would reject the reversed node's next tstop as behind it.
@@ -310,19 +322,6 @@ end
     @unroll for child in children
         reverse_direction!(child)
     end
-end
-
-function _drop_times_behind!(heap, tdir, t)
-    isempty(heap) && return heap
-    old = [pop!(heap)]
-    while !isempty(heap)
-        push!(old, pop!(heap))
-    end
-    threshold = tdir * t
-    for key in old
-        tdir * key > threshold && push!(heap, key)
-    end
-    return heap
 end
 
 function _reverse_time_heap!(heap, threshold)

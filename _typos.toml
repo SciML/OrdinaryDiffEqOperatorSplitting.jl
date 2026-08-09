@@ -5,5 +5,8 @@ Strang = "Strang"
 Tro = "Tro"
 # David Ketcheson, in the citation key AuzHofKetKoc:2017:psm
 Ket = "Ket"
+# Citation keys for the order barrier: Sheng (She:1989:slp), Suzuki (Suz:1991:gtf)
+She = "She"
+Suz = "Suz"
 # Splitting variable name
 BA = "BA"

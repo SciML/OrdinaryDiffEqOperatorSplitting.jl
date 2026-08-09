@@ -146,8 +146,9 @@ end
 
 This example is written for exactly two operators. A scheme that works for any number
 of them loops over `children` with `Unrolled.@unroll`, as the built-in algorithms in
-`src/solver.jl` do; a plain `for` loop over the heterogeneously typed tuple would be
-type unstable.
+`src/solvers/` do; a plain `for` loop over the heterogeneously typed tuple would be
+type unstable. `advance_one_child!` above is `src/solvers/common.jl`'s
+`_advance_child!`, which the built-in schemes share.
 
 ### Adaptive algorithms
 
@@ -177,9 +178,83 @@ end
 OrdinaryDiffEqCore interface for the estimate; go through them rather than touching
 the `EEst` field, whose location on the integrator is an implementation detail.
 
-See [`PalindromicPairLieTrotterGodunov`](@ref) in `src/solver.jl` for a complete
-example, and [Adaptive time stepping](@ref) for how the two layers of adaptivity
-interact.
+See [`PalindromicPairLieTrotterGodunov`](@ref) in `src/solvers/adjoint_pair.jl` for a
+complete example, and [Adaptive time stepping](@ref) for how the two layers of
+adaptivity interact.
+
+## Coefficient tables
+
+Schemes of order three and above are not written out as passes over the children.
+They are described by a table of coefficients and stepped by one shared traversal,
+which lives in `src/solvers/coefficients.jl`; the schemes themselves
+(`src/solvers/tables.jl`) are then little more than the table plus two interface
+methods. See [Higher order splittings](@ref theory_higher-order) for where the
+tables come from.
+
+```@docs
+OrdinaryDiffEqOperatorSplitting.SplittingCoefficients
+OrdinaryDiffEqOperatorSplitting.coefficients
+OrdinaryDiffEqOperatorSplitting.order
+```
+
+A table-driven scheme is added by giving it a struct, a table, `coefficients`,
+`order`, and an `init_cache` returning the shared
+`SplittingCoefficientsCache` — no stepping code of its own:
+
+```julia
+struct MyThirdOrder{AlgTupleType <: Tuple} <:
+       OrdinaryDiffEqOperatorSplitting.AbstractOperatorSplittingAlgorithm
+    inner_algs::AlgTupleType
+end
+
+const MY_COEFFICIENTS = OrdinaryDiffEqOperatorSplitting.SplittingCoefficients(
+    (7 // 24, 2 // 3), (3 // 4, -2 // 3), (-1 // 24, 1 // 1)
+)
+
+OrdinaryDiffEqOperatorSplitting.coefficients(::MyThirdOrder) = MY_COEFFICIENTS
+OrdinaryDiffEqOperatorSplitting.order(::MyThirdOrder) = 3
+
+function OrdinaryDiffEqOperatorSplitting.init_cache(
+        f::GenericSplitFunction, alg::MyThirdOrder;
+        uprev::AbstractArray, u::AbstractVector,
+)
+    return OrdinaryDiffEqOperatorSplitting.SplittingCoefficientsCache(
+        u, uprev, OrdinaryDiffEqOperatorSplitting.coefficients(alg))
+end
+```
+
+Only the consistency condition is checked when the table is built, so a table that
+constructs successfully can still fail to reach the order it claims; a convergence
+test is the only real check.
+
+Two properties of the traversal are worth knowing when reading or extending it:
+
+- **A zero coefficient is skipped entirely**, synchronization included, since the
+  flow is the identity. `Yoshida4`'s last stage relies on this.
+- **The first flow of a step is always synchronized.** Strang-Marchuk skips that
+  sync because its reverse pass ends on operator 1, leaving that child's buffer
+  current; a general table ends on operator `N`, so operator 1's buffer is stale and
+  the same shortcut would silently corrupt every step after the first.
+
+Because a table with negative coefficients steps some children backward, a
+table-driven scheme also depends on the direction reversal described under
+[Backward sub-steps](@ref devdocs_backward-substeps).
+
+If the scheme's order is odd, wrapping it in `AdjointPair` makes it adaptive for
+free: the adjoint is the same table traversed backwards, so nothing further is
+needed from the scheme.
+
+## [Backward sub-steps](@id devdocs_backward-substeps)
+
+An inner integrator fixes its direction of integration when it is constructed, and
+a scheme with negative coefficients has to step it the other way. Rather than build
+two integrators per child, a sub-step against the child's direction reverses the
+child in place, steps, and reverses it back:
+
+```@docs
+OrdinaryDiffEqOperatorSplitting.reverse_direction!
+OrdinaryDiffEqOperatorSplitting.tstops_and_saveat_heaps
+```
 
 ## Dense output
 
