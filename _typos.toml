@@ -3,5 +3,21 @@
 Strang = "Strang"
 # Citation key for Trotter (Tro:1959:psg) used in docstrings
 Tro = "Tro"
+# David Ketcheson, in the citation key AuzHofKetKoc:2017:psm
+Ket = "Ket"
+# Citation keys for the order barrier: Sheng (She:1989:slp), Suzuki (Suz:1991:gtf)
+She = "She"
+Suz = "Suz"
 # Splitting variable name
 BA = "BA"
+# Citation keys for the IMEX multirate methods: Fish/Reynolds/Roberts
+# (FisReyRob:2023:iem), Chinomona/Reynolds (ChiRey:2021:iem),
+# Sandu/Günther (SanGun:2015:gsa), Luan/Chinomona/Reynolds (LuaChiRey:2020:nch)
+Fis = "Fis"
+Rey = "Rey"
+Rob = "Rob"
+Chi = "Chi"
+Gun = "Gun"
+Lua = "Lua"
+# Anders Kvaerno, whose Prothero-Robinson variant is the KPR convergence test problem
+Kvaerno = "Kvaerno"

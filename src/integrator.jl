@@ -134,8 +134,6 @@ end
 
 # --- SplitSubIntegrator interface ---
 
-tdir(integrator::SplitSubIntegrator) = sign(integrator.dt)
-
 # proposed-dt interface (mirrors ODEIntegrator)
 function SciMLBase.set_proposed_dt!(sub::SplitSubIntegrator, dt)
     if sub.dtcache != dt  # only touch if actually changing
@@ -306,9 +304,6 @@ function SciMLBase.__init(
         tstops = ()
     end
 
-    # Heaps store raw times and carry the integration direction in their ordering.
-    # (OrdinaryDiffEqCore's initialize_tstops stores tdir-scaled times instead, which
-    # is incompatible with the heaps reinit! rebuilds and breaks backward tspans.)
     tstops_internal, saveat_internal = tstops_and_saveat_heaps(
         t0, tf, (tstops..., d_discontinuities...), saveat
     )
@@ -338,6 +333,15 @@ function SciMLBase.__init(
         DiffEqBase.CallbackCache(u, max_len_cb, eventErrType, eventErrType)
     end
 
+    # The cache is built before the children, not after: an algorithm whose children
+    # need something the cache owns can only build them once it exists. IMEX-MRI-SR is
+    # the case in point -- its fast child integrates a right-hand side wrapped around
+    # the forcing term that lives in the cache.
+    cache = init_cache_with_parameters(
+        prob.f, alg, p;
+        uprev = uprev, u = u,
+    )
+
     child_subintegrators = build_subintegrators(
         prob, alg,
         uprev, u,
@@ -345,16 +349,12 @@ function SciMLBase.__init(
         1:length(u),
         t0, tf,
         tstops, saveat, d_discontinuities, callback,
-        config
+        config, cache
     )
 
-    cache = init_cache(
-        prob.f, alg;
-        uprev = uprev, u = u,
-    )
-
-    child_solution_indices = ntuple(i -> prob.f.solution_indices[i], length(prob.f.functions))
-    child_synchronizers = ntuple(i -> prob.f.synchronizers[i], length(prob.f.functions))
+    nchildren = child_node_count(alg, prob.f)
+    child_solution_indices = ntuple(i -> prob.f.solution_indices[i], nchildren)
+    child_synchronizers = ntuple(i -> prob.f.synchronizers[i], nchildren)
 
     root_controller_cache = _node_controller_cache(alg, cache, config.values, tType)
     EEst = root_controller_cache === nothing ? tType(NaN) : one(tType)
@@ -447,8 +447,8 @@ function DiffEqBase.reinit!(
         reinit_callbacks = true,
         reinit_retcode = true
     )
-    # The heap ordering types and every node's tdir are fixed at init, so a reinit!
-    # cannot flip the integration direction.
+    # Every node's tdir is fixed at init, and the heaps it hands to its children are
+    # scaled by it, so a reinit! cannot flip the integration direction.
     (tf > t0) == (integrator.tdir > 0) ||
         error("reinit! cannot change the direction of integration. Build a new integrator instead.")
 
@@ -596,22 +596,20 @@ end
 # ---------------------------------------------------------------------------
 function _handle_tstop!(integrator::AnySplitIntegrator)
     if SciMLBase.has_tstop(integrator)
-        # The heaps store raw times; comparisons happen in tdir-space so that
-        # "ahead"/"behind" is direction independent.
-        tdir_t = tdir(integrator) * integrator.t
-        tdir_tstop = tdir(integrator) * SciMLBase.first_tstop(integrator)
+        tdir_t = integrator.tdir * integrator.t
+        tdir_tstop = SciMLBase.first_tstop(integrator)
         if tdir_t == tdir_tstop
             while tdir_t == tdir_tstop
                 SciMLBase.pop_tstop!(integrator)
                 SciMLBase.has_tstop(integrator) ?
-                    (tdir_tstop = tdir(integrator) * SciMLBase.first_tstop(integrator)) : break
+                    (tdir_tstop = SciMLBase.first_tstop(integrator)) : break
             end
             notify_integrator_hit_tstop!(integrator)
         elseif tdir_t > tdir_tstop
             if !integrator.dtchangeable
                 SciMLBase.change_t_via_interpolation!(
                     integrator,
-                    SciMLBase.pop_tstop!(integrator),
+                    pop_next_tstop!(integrator),
                     Val{true}
                 )
                 notify_integrator_hit_tstop!(integrator)
@@ -772,7 +770,7 @@ end
 function modify_dt_for_tstops!(integrator)
     if SciMLBase.has_tstop(integrator)
         tdir_t = integrator.tdir * integrator.t
-        tdir_tstop = integrator.tdir * SciMLBase.first_tstop(integrator)
+        tdir_tstop = SciMLBase.first_tstop(integrator)
         if integrator.opts.adaptive
             integrator.dt = integrator.tdir *
                 min(abs(integrator.dt), abs(tdir_tstop - tdir_t)) # step! to the end
@@ -814,9 +812,11 @@ _snap_window(t, tstop, dt) =
 
 function fixed_t_for_floatingpoint_error!(integrator::AnySplitIntegrator, ttmp)
     return if DiffEqBase.has_tstop(integrator)
-        tstop = DiffEqBase.first_tstop(integrator)
+        tstop = next_tstop(integrator)
         if abs(ttmp - tstop) < _snap_window(integrator.t, tstop, integrator.dt)
-            try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop)
+            try_snap_children_to_tstop!.(
+                integrator.child_subintegrators, tstop, integrator.dt
+            )
             tstop
         else
             ttmp
@@ -825,16 +825,20 @@ function fixed_t_for_floatingpoint_error!(integrator::AnySplitIntegrator, ttmp)
         ttmp
     end
 end
-function try_snap_children_to_tstop!(integrator::SplitSubIntegrator, tstop)
-    if abs(tstop - integrator.t) < _snap_window(integrator.t, tstop, integrator.dt)
+# `scale` is the *outer* step size, and stays the outer one all the way down the tree.
+# All the drift being absorbed here was accumulated by subdividing that one step, so it
+# is the right yardstick; a child's own `dt` is whatever fraction it last landed on and
+# can be arbitrarily smaller, collapsing the window below the drift it has to absorb.
+function try_snap_children_to_tstop!(integrator::SplitSubIntegrator, tstop, scale)
+    if abs(tstop - integrator.t) < _snap_window(integrator.t, tstop, scale)
         integrator.t = tstop
     else
         @warn "Failed to snap timestep for integrator $(integrator.t) with parent integrator hitting the tstop $(tstop)."
     end
-    return try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop)
+    return try_snap_children_to_tstop!.(integrator.child_subintegrators, tstop, scale)
 end
-function try_snap_children_to_tstop!(integrator::DEIntegrator, tstop)
-    return if abs(tstop - integrator.t) < _snap_window(integrator.t, tstop, integrator.dt)
+function try_snap_children_to_tstop!(integrator::DEIntegrator, tstop, scale)
+    return if abs(tstop - integrator.t) < _snap_window(integrator.t, tstop, scale)
         integrator.t = tstop
     else
         @warn "Failed to snap timestep for integrator $(integrator.t) with parent integrator hitting the tstop $(tstop)."
@@ -854,7 +858,9 @@ function step_footer!(integrator::AnySplitIntegrator)
         # halves) accumulate ulp-level drift from the parent's exact `t`.
         # Re-anchor children to the parent's canonical time here so the
         # drift cannot accumulate across outer steps.
-        try_snap_children_to_tstop!.(integrator.child_subintegrators, integrator.t)
+        try_snap_children_to_tstop!.(
+            integrator.child_subintegrators, integrator.t, integrator.dt
+        )
         step_accept_controller!(integrator)
         validate_time_point(integrator)
         handle_callbacks!(integrator)   # also does the saving
@@ -918,8 +924,7 @@ end
 
 function DiffEqBase.solve!(integrator::OperatorSplittingIntegrator)
     while !isempty(integrator.tstops)
-        while tdir(integrator) * integrator.t <
-                tdir(integrator) * SciMLBase.first_tstop(integrator)
+        while integrator.tdir * integrator.t < SciMLBase.first_tstop(integrator)
             step_header!(integrator)
             @timeit_debug "check_error" SciMLBase.check_error!(integrator) ∉ (
                 ReturnCode.Success, ReturnCode.Default,
@@ -939,7 +944,7 @@ end
 
 function DiffEqBase.step!(integrator::AnySplitIntegrator)
     @timeit_debug "step!" if integrator.advance_to_tstop
-        tstop = SciMLBase.first_tstop(integrator)
+        tstop = next_tstop(integrator)
         while !reached_tstop(integrator, tstop)
             step_header!(integrator)
             @timeit_debug "check_error" SciMLBase.check_error!(integrator) ∉ (
@@ -973,7 +978,7 @@ end
 # integration.
 function DiffEqBase.step!(integrator::AnySplitIntegrator, dt, stop_at_tdt = false)
     @timeit_debug "step!" begin
-        tdir(integrator) * dt < zero(dt) && error("Cannot step backward.")
+        integrator.tdir * dt < zero(dt) && error("Cannot step backward.")
         stop_at_tdt && !integrator.dtchangeable &&
             error("Cannot stop at t + dt if dtchangeable is false")
         tnext = integrator.t + dt
@@ -1235,12 +1240,9 @@ function SciMLBase.savevalues!(
         return saved, savedexactly
     tf = integrator.sol.prob.tspan[2]
 
-    # The heaps store raw times and carry the direction in their ordering, so the
-    # comparison is scaled by tdir rather than the stored value.
     tdir_t = integrator.tdir * integrator.t
-    while !isempty(integrator.saveat) &&
-            integrator.tdir * first(integrator.saveat) <= tdir_t
-        curt = pop!(integrator.saveat)
+    while !isempty(integrator.saveat) && first(integrator.saveat) <= tdir_t
+        curt = integrator.tdir * pop!(integrator.saveat)
         if curt == integrator.t
             # `save_end` owns the final point; leave it to the postamble.
             (!save_end && curt == tf) && continue
@@ -1484,8 +1486,13 @@ end
 
 
 # Time helpers
-tdir(integrator) =
-    integrator.tstops.ordering isa BinaryHeaps.FasterForward ? 1 : -1
+#
+# `tstops`/`saveat` keys are tdir-scaled (see `tstops_and_saveat_heaps`), so a raw time
+# is compared against them as `tdir * t`, and a key is turned back into a time by the
+# same multiplication.
+tdir(integrator::AnySplitIntegrator) = integrator.tdir
+next_tstop(integrator) = integrator.tdir * SciMLBase.first_tstop(integrator)
+pop_next_tstop!(integrator) = integrator.tdir * SciMLBase.pop_tstop!(integrator)
 is_past_t(integrator, t) =
     tdir(integrator) * (t - integrator.t) ≤ zero(integrator.t)
 function reached_tstop(integrator, tstop, stop_at_tstop = integrator.dtchangeable)
@@ -1547,7 +1554,7 @@ function advance_solution_by!(integrator::AnySplitIntegrator, dt)
     return advance_solution_by!(integrator, integrator.cache, dt)
 end
 
-# Algorithm-level dispatch (implemented in solver.jl per algorithm)
+# Algorithm-level dispatch (implemented per algorithm under src/solvers/)
 function advance_solution_by!(
         integrator::AnySplitIntegrator,
         cache::AbstractOperatorSplittingCache, dt
@@ -1616,11 +1623,10 @@ function advance_solution_by!(
     return
 end
 
-# `dt` stays signed through the splitting tree, following the SciML `step!`
-# convention: the sign has to match the child's own integration direction, which
-# equals the tree's. Advancing a child *against* its direction (negative substeps
-# of higher order compositions) is not supported yet: leaf ODEIntegrators cannot
-# step against the tdir their tspan fixed at construction.
+# `dt` stays signed through the splitting tree, following the SciML `step!` convention:
+# the sign has to match the child's own integration direction. Schemes of order three
+# and above have negative coefficients, so a substep can oppose the tree's direction,
+# and a child's direction is fixed at construction -- hence `reverse_direction!`.
 
 # Recursion dispatch
 function advance_solution_by!(
@@ -1628,13 +1634,26 @@ function advance_solution_by!(
         sub::SplitSubIntegrator,
         dt
     )
-    SciMLBase.step!(sub, dt, true)
+    _step_signed!(sub, dt)
     return nothing
 end
 
 # Leaf dispatch
 function advance_solution_by!(outer::AnySplitIntegrator, child::DEIntegrator, dt)
-    SciMLBase.step!(child, dt, true)
+    _step_signed!(child, dt)
+    return nothing
+end
+
+# Reversing first is also what satisfies `step!`'s own direction guard: once `tdir` is
+# flipped, a negative `dt` agrees with it.
+function _step_signed!(child, dt)
+    if child.tdir * dt < zero(dt)
+        reverse_direction!(child)
+        SciMLBase.step!(child, dt, true)
+        reverse_direction!(child)
+    else
+        SciMLBase.step!(child, dt, true)
+    end
     return nothing
 end
 
@@ -1643,8 +1662,32 @@ end
 # Tree construction
 # ---------------------------------------------------------------------------
 
-# Top-level builder: called from __init with the full problem.
-# Returns (child_subintegrators::Tuple, cache::AbstractOperatorSplittingCache)
+"""
+    init_cache_with_parameters(f, alg, p; uprev, u)
+
+Internal entry point the tree uses to build a node's cache.
+
+Almost no cache depends on the problem parameters, so this forwards to the documented
+[`init_cache`](@ref) extension point and drops `p`. IMEX-MRI-SR is the exception: its
+cache holds a nonlinear solver for the slow implicit stages, which has to be built
+around the parameters of `f^{I}`.
+"""
+init_cache_with_parameters(f, alg, p; uprev, u) = init_cache(f, alg; uprev, u)
+
+"""
+    child_node_count(alg, f)
+
+How many of `f`'s operators get a child integrator under `alg`.
+
+Almost every algorithm advances every operator, so this is the number of operators.
+IMEX-MRI-SR methods are the exception: they integrate only the fast operator and merely
+*evaluate* the two slow ones, so they build a single child.
+"""
+child_node_count(::AbstractOperatorSplittingAlgorithm, f) = length(f.functions)
+
+# Top-level builder: called from __init with the full problem, after the root cache has
+# been built. `cache` is unused by the stock algorithms and is there for those that wire
+# something cache-owned into a child's right-hand side.
 function build_subintegrators(
         prob::OperatorSplittingProblem,
         alg::AbstractOperatorSplittingAlgorithm,
@@ -1654,7 +1697,8 @@ function build_subintegrators(
         solution_indices,
         t0, tf,
         tstops, saveat, d_discontinuities, callback,
-        config::ConfigTree
+        config::ConfigTree,
+        cache::AbstractOperatorSplittingCache,
     )
     (; f, p) = prob
 
@@ -1724,8 +1768,8 @@ function _build_child(
         t0, tf, (tstops..., d_discontinuities...), ()
     )
 
-    level_cache = init_cache(
-        f, alg;
+    level_cache = init_cache_with_parameters(
+        f, alg, p;
         uprev = uprev_sub, u = u_sub,
     )
 
@@ -1865,7 +1909,7 @@ function DiffEqBase.add_tstop!(i::AnySplitIntegrator, t)
         error("Cannot add a tstop at $t because that is behind the current \
                integrator time $(i.t)")
     DiffEqBase.add_tstop!.(i.child_subintegrators, t)
-    push!(i.tstops, t)
+    push!(i.tstops, i.tdir * t)
     return nothing
 end
 
@@ -1873,7 +1917,7 @@ function DiffEqBase.add_saveat!(i::OperatorSplittingIntegrator, t)
     is_past_t(i, t) &&
         error("Cannot add a saveat point at $t because that is behind the \
                current integrator time $(i.t)")
-    push!(i.saveat, t)
+    push!(i.saveat, i.tdir * t)
     return nothing
 end
 

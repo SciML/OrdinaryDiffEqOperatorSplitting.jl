@@ -14,6 +14,10 @@ import SymbolicIndexingInterface: variable_symbols
 
 import RecursiveArrayTools
 
+# Only for the default `nlsolve` of the IMEX-MRI-SR methods, whose slow implicit stages
+# are nonlinear systems. Users can pass any nonlinear algorithm they like instead.
+import NonlinearSolveFirstOrder: NewtonRaphson
+
 import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isdtchangeable,
     stepsize_controller!, step_accept_controller!, step_reject_controller!,
     accept_step_controller
@@ -150,11 +154,19 @@ include("function.jl")
 include("config_tree.jl")
 include("problem.jl")
 include("integrator.jl")
-include("solver.jl")
+include("solvers/common.jl")
+include("solvers/coefficients.jl")
+include("solvers/lie_trotter_godunov.jl")
+include("solvers/strang_marchuk.jl")
+include("solvers/tables.jl")
+include("solvers/adjoint_pair.jl")
+include("solvers/mri_tables.jl")
+include("solvers/imex_mri_sr.jl")
 include("utils.jl")
 
 export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov, StrangMarchuk,
-    PalindromicPairLieTrotterGodunov
+    PalindromicPairLieTrotterGodunov, Ruth3, Yoshida4, AdjointPair
+export IMEXMRISR2, IMEXMRISR3
 export SplitNode, TreeOption
 
 include("precompilation.jl")

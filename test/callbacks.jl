@@ -100,6 +100,7 @@ exact_crossing(level) = -10 * log(level / 3)
                 ltg(),
                 StrangMarchuk((Euler(), Euler())),
                 PalindromicPairLieTrotterGodunov((Tsit5(), Tsit5())),
+                AdjointPair(Ruth3((Tsit5(), Tsit5()))),
             )
             cb = DiscreteCallback(
                 (u, t, integrator) -> isapprox(t, 0.5),
