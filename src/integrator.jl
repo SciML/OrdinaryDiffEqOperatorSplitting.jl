@@ -333,6 +333,15 @@ function SciMLBase.__init(
         DiffEqBase.CallbackCache(u, max_len_cb, eventErrType, eventErrType)
     end
 
+    # The cache is built before the children, not after: an algorithm whose children
+    # need something the cache owns can only build them once it exists. IMEX-MRI-SR is
+    # the case in point -- its fast child integrates a right-hand side wrapped around
+    # the forcing term that lives in the cache.
+    cache = init_cache_with_parameters(
+        prob.f, alg, p;
+        uprev = uprev, u = u,
+    )
+
     child_subintegrators = build_subintegrators(
         prob, alg,
         uprev, u,
@@ -340,16 +349,12 @@ function SciMLBase.__init(
         1:length(u),
         t0, tf,
         tstops, saveat, d_discontinuities, callback,
-        config
+        config, cache
     )
 
-    cache = init_cache(
-        prob.f, alg;
-        uprev = uprev, u = u,
-    )
-
-    child_solution_indices = ntuple(i -> prob.f.solution_indices[i], length(prob.f.functions))
-    child_synchronizers = ntuple(i -> prob.f.synchronizers[i], length(prob.f.functions))
+    nchildren = child_node_count(alg, prob.f)
+    child_solution_indices = ntuple(i -> prob.f.solution_indices[i], nchildren)
+    child_synchronizers = ntuple(i -> prob.f.synchronizers[i], nchildren)
 
     root_controller_cache = _node_controller_cache(alg, cache, config.values, tType)
     EEst = root_controller_cache === nothing ? tType(NaN) : one(tType)
@@ -1657,8 +1662,32 @@ end
 # Tree construction
 # ---------------------------------------------------------------------------
 
-# Top-level builder: called from __init with the full problem.
-# Returns (child_subintegrators::Tuple, cache::AbstractOperatorSplittingCache)
+"""
+    init_cache_with_parameters(f, alg, p; uprev, u)
+
+Internal entry point the tree uses to build a node's cache.
+
+Almost no cache depends on the problem parameters, so this forwards to the documented
+[`init_cache`](@ref) extension point and drops `p`. IMEX-MRI-SR is the exception: its
+cache holds a nonlinear solver for the slow implicit stages, which has to be built
+around the parameters of `f^{I}`.
+"""
+init_cache_with_parameters(f, alg, p; uprev, u) = init_cache(f, alg; uprev, u)
+
+"""
+    child_node_count(alg, f)
+
+How many of `f`'s operators get a child integrator under `alg`.
+
+Almost every algorithm advances every operator, so this is the number of operators.
+IMEX-MRI-SR methods are the exception: they integrate only the fast operator and merely
+*evaluate* the two slow ones, so they build a single child.
+"""
+child_node_count(::AbstractOperatorSplittingAlgorithm, f) = length(f.functions)
+
+# Top-level builder: called from __init with the full problem, after the root cache has
+# been built. `cache` is unused by the stock algorithms and is there for those that wire
+# something cache-owned into a child's right-hand side.
 function build_subintegrators(
         prob::OperatorSplittingProblem,
         alg::AbstractOperatorSplittingAlgorithm,
@@ -1668,7 +1697,8 @@ function build_subintegrators(
         solution_indices,
         t0, tf,
         tstops, saveat, d_discontinuities, callback,
-        config::ConfigTree
+        config::ConfigTree,
+        cache::AbstractOperatorSplittingCache,
     )
     (; f, p) = prob
 
@@ -1738,8 +1768,8 @@ function _build_child(
         t0, tf, (tstops..., d_discontinuities...), ()
     )
 
-    level_cache = init_cache(
-        f, alg;
+    level_cache = init_cache_with_parameters(
+        f, alg, p;
         uprev = uprev_sub, u = u_sub,
     )
 

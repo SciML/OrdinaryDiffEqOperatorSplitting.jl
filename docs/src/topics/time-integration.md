@@ -273,6 +273,82 @@ For even $p$ the two leading terms are *equal* rather than opposite: averaging
 cancels nothing and the difference is not an error estimate, which is why
 [`AdjointPair`](@ref) rejects an even-order base scheme.
 
+## [Implicit-explicit multirate methods](@id theory_imex-multirate)
+
+Everything above splits the *state*: each operator owns a slice of the solution vector
+and a step is a sequence of flows, coupled only through the initial condition each flow
+is handed. That weak coupling is what limits Lie-Trotter-Godunov and Strang-Marchuk to
+first and second order no matter how accurately the sub-problems are solved
+[FisReyRob:2023:iem](@cite).
+
+The IMEX-MRI-SR methods of [FisReyRob:2023:iem](@cite) break out of that barrier by
+splitting the *right-hand side* instead. One additive partition,
+
+```math
+y'(t) = f^{\{F\}}(t, y) + f^{\{E\}}(t, y) + f^{\{I\}}(t, y),
+```
+
+separates rapidly evolving dynamics ($F$) from slow dynamics that are in turn split in
+an implicit-explicit fashion: $f^{\{I\}}$ is stiff and solved implicitly, $f^{\{E\}}$ is
+non-stiff and treated explicitly. All three act on the *whole* state.
+
+A step from $t_n$ to $t_n + H$ evolves a sequence of *forced* fast initial value
+problems, each restarted from $y_n$ — hence "stage restart" — and follows each with one
+implicit solve at the slow time scale:
+
+```math
+\begin{aligned}
+Y_1 &= y_n, \\
+v_i'(\theta) &= f^{\{F\}}(t_n + \theta, v_i(\theta)) + g_i(\theta),
+  \quad \theta \in [0, c_i H], \quad v_i(0) = y_n, \\
+Y_i &= v_i(c_i H) + H \sum_{j \le i} \gamma_{i,j} f_j^{\{I\}},
+\end{aligned}
+```
+
+with $y_{n+1} = Y_{s}$, and the forcing built from the slow tendencies of the previous
+stages,
+
+```math
+g_i(\theta) = \frac{1}{c_i} \sum_{j < i}
+  \omega_{i,j}\!\left(\frac{\theta}{c_i H}\right)
+  \left(f_j^{\{E\}} + f_j^{\{I\}}\right).
+```
+
+The forcing is what supplies the strong coupling: information from the slow operators
+enters the fast sub-problem throughout its evolution, not merely through its initial
+condition. Because $\omega_{i,j}$ is a polynomial in the normalized fast time, the sum
+over stages collapses once per stage into one vector per power, so a fast right-hand side
+evaluation stays cheap regardless of the stage count.
+
+The fast sub-problem is solved by any ordinary `OrdinaryDiffEq` algorithm, given its own
+step size through the per-node `dt` described under
+[Multi-rate integration](@ref); the paper's experiments use $h = H/10$. The slow implicit
+stages are nonlinear systems, solved by the algorithm's `nlsolve`.
+
+Two methods are provided, [`IMEXMRISR2`](@ref) and [`IMEXMRISR3`](@ref), of order two
+and three. Both carry an embedding one order lower, which gives a genuine local error
+estimate and hence adaptivity — unlike the splitting schemes, this needs no second pass
+over the step, only one extra fast solve over $[0, H]$. The paper's fourth order method
+is deliberately not included: its joint stability region is empty and its embedding
+gives poor estimates, which the authors report as getting "stuck" oscillating between
+accepted and rejected steps.
+
+Because the partition is additive rather than state-disjoint, these algorithms expect a
+[`GenericSplitFunction`](@ref) whose three operators — in the order
+$f^{\{F\}}, f^{\{E\}}, f^{\{I\}}$ — each span the whole state:
+
+```julia
+f = GenericSplitFunction(
+    (f_fast, f_explicit, f_implicit),
+    (1:n, 1:n, 1:n),      # additive: every operator sees the whole state
+)
+
+dt = TreeOption(f, H)
+dt[f[1]] = H / 10          # the fast sub-problem's step size
+
+solve(OperatorSplittingProblem(f, u0, tspan), IMEXMRISR3(BS3()); dt, adaptive = true)
+```
+
 ## References
 
 ```@bibliography

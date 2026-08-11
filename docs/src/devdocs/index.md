@@ -51,6 +51,8 @@ prob = OperatorSplittingProblem(f, u0, tspan)
 OrdinaryDiffEqOperatorSplitting.AbstractOperatorSplittingAlgorithm
 OrdinaryDiffEqOperatorSplitting.AbstractOperatorSplittingCache
 OrdinaryDiffEqOperatorSplitting.init_cache
+OrdinaryDiffEqOperatorSplitting.init_cache_with_parameters
+OrdinaryDiffEqOperatorSplitting.child_node_count
 OrdinaryDiffEqOperatorSplitting._perform_step!
 OrdinaryDiffEqOperatorSplitting.advance_solution_by!
 OrdinaryDiffEqOperatorSplitting.child_failed
@@ -77,6 +79,23 @@ The algorithm struct has to carry the inner algorithms of the problem sequence i
 field named `inner_algs`, because that is how the tree of integrators is built
 alongside the tree of split functions. The cache is where a scheme keeps the buffers
 it needs beyond `u`/`uprev`.
+
+Two further hooks exist for algorithms that do not fit the "one child per operator,
+coupled only through initial conditions" shape. Both have defaults, so an ordinary
+scheme never mentions them:
+
+- [`OrdinaryDiffEqOperatorSplitting.child_node_count`](@ref) says how many of the
+  operators get a child integrator. The default is all of them; an algorithm that only
+  *evaluates* some operators returns fewer.
+- [`OrdinaryDiffEqOperatorSplitting.init_cache_with_parameters`](@ref) is what the tree
+  actually calls, and it forwards to `init_cache` while dropping the problem
+  parameters. Override it when the cache itself needs them -- for instance to build a
+  nonlinear solver around one of the operators.
+
+A node's cache is built *before* its children, so a child's right-hand side may be
+wrapped around something the cache owns. `IMEXMRISR3` uses all of this: it builds one
+child from the fast operator, wrapped so that each stage's forcing term, which lives in
+the cache, is added to the fast right-hand side.
 
 ```julia
 using SciMLBase, OrdinaryDiffEqOperatorSplitting
