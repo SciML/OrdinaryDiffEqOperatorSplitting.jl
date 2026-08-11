@@ -266,7 +266,7 @@ function _fix_dt_at_bounds!(integrator::AnySplitIntegrator)
     # over dtmax if the two conflict.
     dtmax = abs(integrator.opts.dtmax)
     dtmin = abs(DiffEqBase.timedepentdtmin(integrator))
-    integrator.dt = tdir(integrator) * max(min(abs(integrator.dt), dtmax), dtmin)
+    integrator.dt = integrator.tdir * max(min(abs(integrator.dt), dtmax), dtmin)
     return nothing
 end
 
@@ -282,10 +282,6 @@ The `tstops`/`saveat`/`d_discontinuities` heaps store `tdir`-scaled times, so ne
 every key re-expresses the same raw times under the new direction -- which inverts the
 heap order, hence the rebuild. Times now *behind* are dropped, because `handle_tstop!`
 errors on an unconsumed stop that `t` has passed.
-
-A `SplitSubIntegrator` follows the same convention (see
-[`tstops_and_saveat_heaps`](@ref)) and is reversed the same way; it just has fewer
-things to reverse.
 """
 function reverse_direction!(integrator::DEIntegrator)
     integrator.tdir = -integrator.tdir

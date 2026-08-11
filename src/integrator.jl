@@ -604,7 +604,7 @@ function _handle_tstop!(integrator::AnySplitIntegrator)
             if !integrator.dtchangeable
                 SciMLBase.change_t_via_interpolation!(
                     integrator,
-                    pop_next_tstop!(integrator),
+                    integrator.tdir * SciMLBase.pop_tstop!(integrator),
                     Val{true}
                 )
                 notify_integrator_hit_tstop!(integrator)
@@ -807,7 +807,7 @@ _snap_window(t, tstop, dt) =
 
 function fixed_t_for_floatingpoint_error!(integrator::AnySplitIntegrator, ttmp)
     return if DiffEqBase.has_tstop(integrator)
-        tstop = next_tstop(integrator)
+        tstop = integrator.tdir * SciMLBase.first_tstop(integrator)
         if abs(ttmp - tstop) < _snap_window(integrator.t, tstop, integrator.dt)
             try_snap_children_to_tstop!.(
                 integrator.child_subintegrators, tstop, integrator.dt
@@ -939,7 +939,7 @@ end
 
 function DiffEqBase.step!(integrator::AnySplitIntegrator)
     @timeit_debug "step!" if integrator.advance_to_tstop
-        tstop = next_tstop(integrator)
+        tstop = integrator.tdir * SciMLBase.first_tstop(integrator)
         while !reached_tstop(integrator, tstop)
             step_header!(integrator)
             @timeit_debug "check_error" SciMLBase.check_error!(integrator) ∉ (
@@ -1483,16 +1483,13 @@ end
 # Time helpers
 #
 # `tstops`/`saveat` keys are tdir-scaled (see `tstops_and_saveat_heaps`), so a raw time
-# is compared against them as `tdir * t`, and a key is turned back into a time by the
-# same multiplication.
-tdir(integrator::AnySplitIntegrator) = integrator.tdir
-next_tstop(integrator) = integrator.tdir * SciMLBase.first_tstop(integrator)
-pop_next_tstop!(integrator) = integrator.tdir * SciMLBase.pop_tstop!(integrator)
+# is compared against them as `integrator.tdir * t`, and a key is turned back into a
+# time by the same multiplication.
 is_past_t(integrator, t) =
-    tdir(integrator) * (t - integrator.t) ≤ zero(integrator.t)
+    integrator.tdir * (t - integrator.t) ≤ zero(integrator.t)
 function reached_tstop(integrator, tstop, stop_at_tstop = integrator.dtchangeable)
     if stop_at_tstop
-        tdir(integrator) * (integrator.t - tstop) > zero(integrator.t) &&
+        integrator.tdir * (integrator.t - tstop) > zero(integrator.t) &&
             error("Integrator missed stop at $tstop (current time=$(integrator.t)). Aborting.")
         return integrator.t ≈ tstop
     else

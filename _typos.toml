@@ -8,5 +8,8 @@ Ket = "Ket"
 # Citation keys for the order barrier: Sheng (She:1989:slp), Suzuki (Suz:1991:gtf)
 She = "She"
 Suz = "Suz"
+# Hansen and Ostermann, in the citation key HanOst:2009:hos
+Han = "Han"
+Ost = "Ost"
 # Splitting variable name
 BA = "BA"

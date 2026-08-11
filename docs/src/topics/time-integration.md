@@ -222,16 +222,22 @@ to each other collapses nine flows to eight — which is exactly the four-stage 
 ### The order barrier and negative coefficients
 
 Note that $w_0 < 0$ above. This is not an artifact of the construction: no splitting
-scheme of order greater than two has all coefficients positive
-[She:1989:slp,Suz:1991:gtf](@cite). Any third- or higher-order splitting therefore
-integrates some sub-problem *backward in time* during part of every step, which has
-two practical consequences.
+scheme with *real* coefficients of order greater than two has all of them positive
+[She:1989:slp,Suz:1991:gtf](@cite). Any third- or higher-order real splitting
+therefore integrates some sub-problem *backward in time* during part of every step,
+which has two practical consequences.
 
 First, the sub-problems must admit a backward flow. For a parabolic sub-problem —
 diffusion, say — the backward evolution is ill-posed and the negative sub-steps are
 violently unstable, so on a reaction-diffusion system the higher-order schemes here
 are not usable on the diffusion operator, however attractive their order. This is
 the reason Strang-Marchuk remains the workhorse despite being only second order.
+
+The barrier is a statement about real coefficients only. Allowing *complex*
+coefficients with positive real part, high-order splittings do exist for analytic
+semigroups [HanOst:2009:hos](@cite): the sub-steps then move along rays into the
+complex time plane rather than backward along the real axis, which keeps a parabolic
+sub-flow well posed.
 
 Second, the implementation has to actually run its sub-integrators backwards. An
 inner integrator fixes its direction of integration at construction, so a negative

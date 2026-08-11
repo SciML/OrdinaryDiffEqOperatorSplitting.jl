@@ -244,6 +244,17 @@ If the scheme's order is odd, wrapping it in `AdjointPair` makes it adaptive for
 free: the adjoint is the same table traversed backwards, so nothing further is
 needed from the scheme.
 
+Any published two- or three-operator table with real coefficients — the `AB`/`ABC`
+tables of [AuzHofKetKoc:2017:psm](@cite) and the collections derived from them — can
+be added this way, needing nothing but the coefficients themselves.
+
+The [complex-coefficient schemes](@ref theory_higher-order) are the exception. The
+traversal would not change for them, but everything downstream of `coefficient * dt`
+would: the sub-problems, their states and their inner integrators would all have to
+be complex, as would the error norms and step size controllers. That is a property of
+the problem being split rather than of the table, so it is not something a table
+alone can opt into.
+
 ## [Backward sub-steps](@id devdocs_backward-substeps)
 
 An inner integrator fixes its direction of integration when it is constructed, and
