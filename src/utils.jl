@@ -96,6 +96,17 @@ function forward_sync_subintegrator!(
         reset_next_sync_continuous(parent)
         return nothing
     end
+    # Hand an adaptive child the parent's step as its next proposal, so it does not
+    # re-enter the substep with the sliver `modify_dt_for_tstops!` clipped off the end
+    # of the previous one and spend steps climbing back.
+    #
+    # Only for adaptive children. `set_proposed_dt!` writes `dtcache` as well as
+    # `dtpropose`, and `dtcache` is exactly what a *fixed* step child reads to size its
+    # step -- overwriting it there discards a per-node `dt` and collapses multi-rate
+    # subcycling to one inner step per substep.
+    if _child_is_adaptive(child) && isdtchangeable(child)
+        set_proposed_dt!(child, parent.dt)
+    end
     forward_sync_internal!(parent.u, parent.uprev, child, solution_indices)
     @timeit_debug "external sync" forward_sync_external!(parent, child, sync)
     return nothing

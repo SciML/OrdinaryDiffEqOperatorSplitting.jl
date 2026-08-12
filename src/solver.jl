@@ -188,6 +188,24 @@ to it (adaptive inner solvers, or fixed steps well below the splitting step). Wi
 coarse fixed-step inner solvers -- say `Euler()` stepping at the splitting step size
 -- the overall method degrades to the inner order and the controller is blind to
 that part of the error.
+
+!!! warning "The estimate is antisymmetric, and can go silent"
+    The pair difference measures the *commutator* of the operators, so it sees only the
+    antisymmetric part of the splitting error. The symmetric part -- for a stiff problem,
+    the over-damping a large step inflicts -- is invisible to it, and two orderings that
+    are both badly wrong in the same direction produce a small difference.
+
+    That blind spot has a failure mode with positive feedback. A step large enough to
+    damp the solution towards a state where the operators commute makes the estimate
+    *smaller*, which grows `dt`, which damps further; at such a state (for a
+    reaction-diffusion problem, the uniform steady state) the two orderings agree
+    exactly, the estimate is identically zero, and nothing bounds `dt` at all. The solve
+    still reports success. Making the inner solvers adaptive does not help -- it removes
+    the inner error from the picture and leaves the silent estimate as the only control.
+
+    `dtmax` is the guard. It defaults to the length of the integration interval, which
+    only bounds the runaway; on a problem where a too-large step can destroy the
+    solution, set it to a step size you would have been willing to run at fixed.
 """
 struct PalindromicPairLieTrotterGodunov{AlgTupleType <: Tuple} <: AbstractOperatorSplittingAlgorithm
     inner_algs::AlgTupleType # Tuple of timesteppers for inner problems

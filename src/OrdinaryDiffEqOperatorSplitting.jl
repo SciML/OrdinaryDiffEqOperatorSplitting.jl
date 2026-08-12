@@ -12,6 +12,8 @@ import SciMLBase: ReturnCode
 import SciMLBase: DEIntegrator, NullParameters, isadaptive
 import SymbolicIndexingInterface: variable_symbols
 
+import DiffEqBase: set_proposed_dt!
+
 import RecursiveArrayTools
 
 import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isdtchangeable,

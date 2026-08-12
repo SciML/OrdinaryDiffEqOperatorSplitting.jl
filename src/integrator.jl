@@ -288,6 +288,14 @@ function SciMLBase.__init(
     # Every setting is either one value for the whole tree or a TreeOption carrying a
     # value per node. Beyond the four this integrator handles itself, whatever the
     # caller passes travels down to the leaf integrators.
+    # `dtmax` defaults to the length of the integration interval, as in
+    # OrdinaryDiffEqCore. Without a bound an adaptive splitting node can propose a step
+    # larger than the whole tspan: its error estimate only sees the *splitting* error,
+    # which vanishes identically wherever the operators commute, so a solution that has
+    # collapsed onto a common fixed point reports zero error and lets `dt` run away.
+    if !haskey(kwargs, :dtmax)
+        kwargs = merge(values(kwargs), (; dtmax = abs(tf - t0)))
+    end
     config = build_config_tree(prob.f, (; dt, adaptive, verbose, controller, kwargs...))
     validate_dt_tree(config)
     tType = typeof(config.values.dt)
@@ -841,10 +849,27 @@ function try_snap_children_to_tstop!(integrator::DEIntegrator, tstop)
     end
 end
 
+"""
+    log_step_diagnostics(integrator, accepted)
+
+Emit `(t, dt, EEst, accept/reject)` for one splitting step when the node's verbosity is
+on. The splitting error estimate is otherwise invisible from the outside, which makes a
+step size that is being driven by an incomplete estimate very hard to diagnose -- see
+the warning in [`PalindromicPairLieTrotterGodunov`](@ref).
+"""
+function log_step_diagnostics(integrator::AnySplitIntegrator, accepted::Bool)
+    integrator.controller_cache === nothing && return
+    _is_verbose(integrator.opts.verbose) || return
+    @debug "operator splitting step" t = integrator.t dt = integrator.dt EEst =
+        OrdinaryDiffEqCore.get_EEst(integrator) accepted
+    return
+end
+
 function step_footer!(integrator::AnySplitIntegrator)
     ttmp = integrator.t + integrator.dt # dt is signed by the integration direction
     footer_reset_flags!(integrator)
     setup_validity_flags!(integrator, ttmp)
+    log_step_diagnostics(integrator, should_accept_step(integrator))
     if should_accept_step(integrator)
         OrdinaryDiffEqCore.increment_accept!(integrator.stats)
         integrator.last_step_failed = false
@@ -1466,6 +1491,13 @@ function step_accept_controller!(
     # introspection.
     integrator.dt = dtnew
     integrator.dtcache = abs(dtnew)
+    # Bound the stored proposal, not just the step about to be taken. `step_header!`
+    # clamps `dt` before stepping either way, so this does not change which steps are
+    # taken -- but an unclamped `dtcache` is what `reinit!` restores and what `dt`
+    # reports afterwards, and a proposal above `dtmax` there reads as the bound having
+    # been ignored.
+    _fix_dt_at_bounds!(integrator)
+    integrator.dtcache = abs(integrator.dt)
     return nothing
 end
 
