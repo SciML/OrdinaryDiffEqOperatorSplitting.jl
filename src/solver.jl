@@ -167,6 +167,8 @@ end
 """
     PalindromicPairLieTrotterGodunov <: AbstractOperatorSplittingAlgorithm
 
+    PalindromicPairLieTrotterGodunov(inner_algs; local_extrapolation = true)
+
 Second-order sequential operator splitting algorithm.
 
 One step solves the palindromic pair of [`LieTrotterGodunov`](@ref) sequences
@@ -176,11 +178,21 @@ One step solves the palindromic pair of [`LieTrotterGodunov`](@ref) sequences
 
 from the same initial value. The leading splitting error of a Lie-Trotter sequence
 is ``\\frac{\\Delta t^2}{2}\\sum_{i<j} [A_j, A_i]``, and reversing the sequence
-flips the sign of every pairwise commutator, so the average of the pair -- which is
-taken as the solution -- is second order accurate for any number of operators. Half
-the pair difference estimates the local splitting error of a single sequence and
-drives the step size controller, making this the only splitting algorithm in this
-package that supports adaptive time stepping of the splitting itself.
+flips the sign of every pairwise commutator, so the average of the pair is second
+order accurate for any number of operators. Half the pair difference estimates the
+local splitting error of a *single* sequence and drives the step size controller,
+making this the only splitting algorithm in this package that supports adaptive time
+stepping of the splitting itself.
+
+# Keywords
+
+  - `local_extrapolation`: which member of the pair to propagate.
+    `true` (default) advances the second-order average while controlling the step with
+    the first-order estimate -- classical local extrapolation, more accurate per step
+    but the estimate over-reports the advanced solution's error, so the controller
+    rejects steps it did not need to. `false` advances the first-order forward sequence
+    ``A_1 \\to \\cdots \\to A_N``, for which the pair difference *is* the local error, so
+    the controller is calibrated to what it advances.
 
 Both the order statement and the error estimate account for the *splitting* error
 only: they presume the inner solvers resolve their sub-problems accurately relative
@@ -189,30 +201,31 @@ coarse fixed-step inner solvers -- say `Euler()` stepping at the splitting step 
 -- the overall method degrades to the inner order and the controller is blind to
 that part of the error.
 
-!!! warning "The estimate is antisymmetric, and can go silent"
-    The pair difference measures the *commutator* of the operators, so it sees only the
-    antisymmetric part of the splitting error. The symmetric part -- for a stiff problem,
-    the over-damping a large step inflicts -- is invisible to it, and two orderings that
-    are both badly wrong in the same direction produce a small difference.
+!!! note "What the pair difference does and does not see"
+    The difference measures the *commutator* of the operators. The inner solvers' error
+    enters both orderings almost identically and therefore cancels in it, so the
+    estimate constrains the splitting error alone. Under adaptive inner solvers that is
+    exactly right -- each operator controls its own error and this node controls the
+    splitting -- and tightening `abstol`/`reltol` drives the total error down as usual.
+    With non-adaptive inner solvers the inner error rides along uncontrolled, and the
+    step size is being chosen from an estimate that does not cover it.
 
-    That blind spot has a failure mode with positive feedback. A step large enough to
-    damp the solution towards a state where the operators commute makes the estimate
-    *smaller*, which grows `dt`, which damps further; at such a state (for a
-    reaction-diffusion problem, the uniform steady state) the two orderings agree
-    exactly, the estimate is identically zero, and nothing bounds `dt` at all. The solve
-    still reports success. Making the inner solvers adaptive does not help -- it removes
-    the inner error from the picture and leaves the silent estimate as the only control.
-
-    `dtmax` is the guard. It defaults to the length of the integration interval, which
-    only bounds the runaway; on a problem where a too-large step can destroy the
-    solution, set it to a step size you would have been willing to run at fixed.
+    The difference also vanishes identically wherever the operators commute, so at a
+    state that is a fixed point of all of them the estimate is zero at any step size.
+    On a problem where a too-large step can collapse the solution onto such a state,
+    that degeneracy is reachable and `dtmax` bounds it -- but a tolerance appropriate to
+    the problem keeps it out of reach in the first place.
 """
 struct PalindromicPairLieTrotterGodunov{AlgTupleType <: Tuple} <: AbstractOperatorSplittingAlgorithm
     inner_algs::AlgTupleType # Tuple of timesteppers for inner problems
+    local_extrapolation::Bool # propagate the second order average, or the first order sequence
 end
 
+PalindromicPairLieTrotterGodunov(inner_algs::Tuple; local_extrapolation::Bool = true) =
+    PalindromicPairLieTrotterGodunov(inner_algs, local_extrapolation)
+
 function Base.show(io::IO, alg::PalindromicPairLieTrotterGodunov)
-    print(io, "PPLTG (")
+    print(io, alg.local_extrapolation ? "PPLTG (" : "PPLTG[1st] (")
     for inner_alg in alg.inner_algs[1:(end - 1)]
         Base.show(io, inner_alg)
         print(io, " <-> ")
@@ -229,14 +242,18 @@ alg_adaptive_order(::PalindromicPairLieTrotterGodunov) = 1
 struct PalindromicPairLieTrotterGodunovCache{uType, uprevType, uforwardType} <: AbstractOperatorSplittingCache
     u::uType
     uprev::uprevType
-    uforward::uforwardType # end state of the A₁ → A₂ sequence; reused as the residual buffer
+    uforward::uforwardType # end state of the A₁ → A₂ sequence
+    utmp::uforwardType     # half the pair difference, held while `u` is overwritten
+    local_extrapolation::Bool
 end
 
 function init_cache(
         f::GenericSplitFunction, alg::PalindromicPairLieTrotterGodunov;
         uprev::AbstractArray, u::AbstractVector,
     )
-    return PalindromicPairLieTrotterGodunovCache(u, uprev, similar(u))
+    return PalindromicPairLieTrotterGodunovCache(
+        u, uprev, similar(u), similar(u), alg.local_extrapolation
+    )
 end
 
 function _ppltg_advance_child!(parent, child, i, dt)
@@ -293,14 +310,26 @@ function _perform_step!(
     _ppltg_reverse_pass!(parent, reverse(children), dt, length(children))
     parent.force_stepfail && return
 
-    # The average of the pair is the second order solution ...
-    parent.u .= (parent.u .+ uforward) ./ 2
-    if parent.controller_cache !== nothing
-        # ... and half the pair difference the local error of a single sequence.
+    # `parent.u` holds the reverse sequence and `uforward` the forward one. Half their
+    # difference is the local error of a single sequence, whichever of the two the
+    # `local_extrapolation` setting goes on to propagate -- so it is taken before `u` is
+    # overwritten, and scaled afterwards against the solution actually advanced.
+    adaptive = parent.controller_cache !== nothing
+    adaptive && (@. cache.utmp = (parent.u - uforward) / 2)
+
+    if cache.local_extrapolation
+        # The average of the pair is the second order solution.
+        parent.u .= (parent.u .+ uforward) ./ 2
+    else
+        # The forward sequence is first order, and the estimate is exactly its error.
+        parent.u .= uforward
+    end
+
+    if adaptive
         (; abstol, reltol, internalnorm) = parent.opts
-        @. uforward = (parent.u - uforward) /
+        @. cache.utmp = cache.utmp /
             (abstol + max(abs(parent.u), abs(parent.uprev)) * reltol)
-        OrdinaryDiffEqCore.set_EEst!(parent, internalnorm(uforward, parent.t + dt))
+        OrdinaryDiffEqCore.set_EEst!(parent, internalnorm(cache.utmp, parent.t + dt))
     end
     return
 end

@@ -20,26 +20,124 @@ import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isdtchangeable,
     stepsize_controller!, step_accept_controller!, step_reject_controller!,
     accept_step_controller
 
+# `@verbosity_specifier` expands to code referring to SciMLLogging's names (presets,
+# `MessageLevel`, `AbstractVerbosityPreset`) unqualified, so they have to be in scope.
+using SciMLLogging
+
 # In OrdinaryDiffEq v7 / DiffEqBase v7, passing verbose::Bool to inner ODE
 # integrators is no longer supported. Convert Bool → DEVerbosity when available.
 @static if isdefined(DiffEqBase, :DEVerbosity)
+    """
+        OperatorSplittingVerbosity
+
+    Verbosity configuration for the splitting nodes of an operator-splitting solve.
+
+    A splitting node has diagnostics of its own -- the step size it chose and the
+    splitting error estimate behind that choice -- which are separate from anything the
+    inner integrators report. Those are toggled here, while `inner_verbosity` holds the
+    `DiffEqBase.DEVerbosity` handed to every inner integrator, mirroring the way
+    `DEVerbosity` itself nests `linear_verbosity` and `nonlinear_verbosity`.
+
+    # Toggles
+
+      - `splitting_step_accepted`: `t`, `dt` and `EEst` of each accepted splitting step.
+      - `splitting_step_rejected`: the same for a step the controller rejected.
+      - `inner_solver_stats`: a per-operator summary of the inner integrator work --
+        steps, rejections, `f` evaluations, Jacobians, `W` factorizations, linear solves
+        -- emitted once when the solve finishes.
+
+    # Examples
+
+    ```julia
+    # A preset applies to this node and travels to the inner integrators.
+    verbose = OperatorSplittingVerbosity(SciMLLogging.All())
+
+    # Splitting diagnostics on, inner integrators quiet.
+    verbose = OperatorSplittingVerbosity(
+        splitting_step_accepted = SciMLLogging.InfoLevel(),
+        inner_solver_stats = SciMLLogging.InfoLevel(),
+        inner_verbosity = DiffEqBase.DEVerbosity(SciMLLogging.None()),
+    )
+    ```
+
+    A `DEVerbosity`, a `SciMLLogging` preset or a `Bool` passed as `verbose` is accepted
+    and converted. A `DEVerbosity` becomes the `inner_verbosity` with the splitting
+    diagnostics left silent, so existing code keeps exactly its previous output.
+    """
+    @verbosity_specifier OperatorSplittingVerbosity begin
+        toggles = (
+            :splitting_step_accepted, :splitting_step_rejected, :inner_solver_stats,
+        )
+
+        sub_specifiers = (:inner_verbosity,)
+
+        groups = (
+            step_control = (:splitting_step_accepted, :splitting_step_rejected),
+            performance = (:inner_solver_stats,),
+        )
+
+        presets = (
+            None = (
+                inner_verbosity = None(),
+                splitting_step_accepted = Silent(),
+                splitting_step_rejected = Silent(),
+                inner_solver_stats = Silent(),
+            ),
+            Minimal = (
+                inner_verbosity = Minimal(),
+                splitting_step_accepted = Silent(),
+                splitting_step_rejected = Silent(),
+                inner_solver_stats = Silent(),
+            ),
+            Standard = (
+                inner_verbosity = Standard(),
+                splitting_step_accepted = Silent(),
+                splitting_step_rejected = Silent(),
+                inner_solver_stats = Silent(),
+            ),
+            Detailed = (
+                inner_verbosity = Detailed(),
+                splitting_step_accepted = Silent(),
+                splitting_step_rejected = InfoLevel(),
+                inner_solver_stats = InfoLevel(),
+            ),
+            All = (
+                inner_verbosity = All(),
+                splitting_step_accepted = InfoLevel(),
+                splitting_step_rejected = InfoLevel(),
+                inner_solver_stats = InfoLevel(),
+            ),
+        )
+    end
+
+    const DEFAULT_VERBOSITY = OperatorSplittingVerbosity(SciMLLogging.Minimal())
+
     _inner_verbose(verbose::Bool) = verbose ?
         DiffEqBase.DEVerbosity(SciMLLogging.Minimal()) :
         DiffEqBase.DEVerbosity(SciMLLogging.None())
-    const DEFAULT_VERBOSITY = DiffEqBase.DEVerbosity(SciMLLogging.Minimal())
+    _inner_verbose(verbose::OperatorSplittingVerbosity) = verbose.inner_verbosity
+
+    # A splitting node owns an `OperatorSplittingVerbosity`; anything else a caller
+    # passes is the inner integrators' setting and is wrapped, leaving the splitting
+    # diagnostics off so that existing code keeps its previous output.
+    _process_verbose(verbose::OperatorSplittingVerbosity) = verbose
+    _process_verbose(verbose::DiffEqBase.DEVerbosity) = OperatorSplittingVerbosity(;
+        preset = SciMLLogging.Minimal(), inner_verbosity = verbose
+    )
+    _process_verbose(preset::SciMLLogging.AbstractVerbosityPreset) =
+        OperatorSplittingVerbosity(preset)
 else
     const DEFAULT_VERBOSITY = false
 end
 _inner_verbose(verbose) = verbose
+_process_verbose(verbose) = verbose
 
 # `verbose` reaches us either as a Bool or, through DiffEqBase v7's `init`, as a
-# DEVerbosity whose first type parameter is the on/off flag. Neither can be used in
-# a boolean context directly.
+# verbosity specifier whose first type parameter is the on/off flag. Neither can be
+# used in a boolean context directly.
 _is_verbose(verbose::Bool) = verbose
 _is_verbose(verbose) = true
-@static if isdefined(DiffEqBase, :DEVerbosity)
-    _is_verbose(::DiffEqBase.DEVerbosity{B}) where {B} = B
-end
+_is_verbose(::SciMLLogging.AbstractVerbositySpecifier{B}) where {B} = B
 
 """
     AbstractOperatorSplitFunction

@@ -296,6 +296,7 @@ function SciMLBase.__init(
     if !haskey(kwargs, :dtmax)
         kwargs = merge(values(kwargs), (; dtmax = abs(tf - t0)))
     end
+    verbose = _process_verbose(verbose)
     config = build_config_tree(prob.f, (; dt, adaptive, verbose, controller, kwargs...))
     validate_dt_tree(config)
     tType = typeof(config.values.dt)
@@ -852,17 +853,78 @@ end
 """
     log_step_diagnostics(integrator, accepted)
 
-Emit `(t, dt, EEst, accept/reject)` for one splitting step when the node's verbosity is
-on. The splitting error estimate is otherwise invisible from the outside, which makes a
-step size that is being driven by an incomplete estimate very hard to diagnose -- see
-the warning in [`PalindromicPairLieTrotterGodunov`](@ref).
+Report the step size a splitting node chose and the error estimate behind it, under the
+`splitting_step_accepted` / `splitting_step_rejected` toggles of
+[`OperatorSplittingVerbosity`](@ref).
+
+The splitting error estimate is otherwise invisible from the outside, which makes a step
+size driven by an estimate that does not cover the whole error -- see the note in
+[`PalindromicPairLieTrotterGodunov`](@ref) -- very hard to diagnose.
 """
 function log_step_diagnostics(integrator::AnySplitIntegrator, accepted::Bool)
     integrator.controller_cache === nothing && return
-    _is_verbose(integrator.opts.verbose) || return
-    @debug "operator splitting step" t = integrator.t dt = integrator.dt EEst =
-        OrdinaryDiffEqCore.get_EEst(integrator) accepted
+    verbose = integrator.opts.verbose
+    t, dt = integrator.t, integrator.dt
+    eest = OrdinaryDiffEqCore.get_EEst(integrator)
+    if accepted
+        @SciMLMessage(
+            lazy"splitting step accepted: t = $(t), dt = $(dt), EEst = $(eest)",
+            verbose, :splitting_step_accepted
+        )
+    else
+        @SciMLMessage(
+            lazy"splitting step rejected: t = $(t), dt = $(dt), EEst = $(eest)",
+            verbose, :splitting_step_rejected
+        )
+    end
     return
+end
+
+"""
+    log_inner_solver_stats(integrator)
+
+Summarise, once at the end of a solve, how much work each operator's inner integrator
+did: steps, rejections and whatever of `nf`/`njacs`/`nw`/`nsolve` its solver tracks.
+
+A splitting node counts only its own steps, so the cost of a solve is otherwise
+invisible -- and it is the inner counters that show whether a step size is being paid
+for in Jacobians and factorizations. Controlled by the `inner_solver_stats` toggle of
+[`OperatorSplittingVerbosity`](@ref).
+"""
+function log_inner_solver_stats(integrator::OperatorSplittingIntegrator)
+    verbose = integrator.opts.verbose
+    @SciMLMessage(verbose, :inner_solver_stats) do
+        lines = ["inner integrator statistics"]
+        _collect_inner_stats!(lines, integrator.child_subintegrators, ())
+        join(lines, "\n  ")
+    end
+    return
+end
+
+function _collect_inner_stats!(lines, children::Tuple, path::Tuple)
+    for (i, child) in enumerate(children)
+        _collect_inner_stats!(lines, child, (path..., i))
+    end
+    return lines
+end
+function _collect_inner_stats!(lines, child::SplitSubIntegrator, path::Tuple)
+    push!(lines, "$(_showpath(path)): $(child.stats.naccept) steps, $(child.stats.nreject) rejected")
+    return _collect_inner_stats!(lines, child.child_subintegrators, path)
+end
+function _collect_inner_stats!(lines, child::DEIntegrator, path::Tuple)
+    s = SciMLBase.has_stats(child) ? child.sol.stats : nothing
+    if s === nothing
+        push!(lines, "$(_showpath(path)): no statistics available")
+        return lines
+    end
+    counters = ("steps" => :naccept, "rejected" => :nreject, "f" => :nf,
+                "jacs" => :njacs, "W" => :nw, "linsolve" => :nsolve)
+    parts = [
+        "$name=$(getfield(s, field))" for (name, field) in counters
+            if hasfield(typeof(s), field)
+    ]
+    push!(lines, "$(_showpath(path)) ($(nameof(typeof(child.alg)))): " * join(parts, " "))
+    return lines
 end
 
 function step_footer!(integrator::AnySplitIntegrator)
@@ -1545,6 +1607,7 @@ function SciMLBase.postamble!(integrator::OperatorSplittingIntegrator)
     # step may run the finalizers and close out the solution.
     integrator.postamble_done && return nothing
     integrator.postamble_done = true
+    log_inner_solver_stats(integrator)
     DiffEqBase.finalize!(integrator.callback, integrator.u, integrator.t, integrator)
     save_endpoint!(integrator)
     # Drop whatever a previous, longer run left behind (`reinit!` without `erase_sol`).
