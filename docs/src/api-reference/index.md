@@ -18,6 +18,9 @@ GenericSplitFunction
 LieTrotterGodunov
 StrangMarchuk
 PalindromicPairLieTrotterGodunov
+Ruth3
+Yoshida4
+AdjointPair
 ```
 
 ## Per-node configuration

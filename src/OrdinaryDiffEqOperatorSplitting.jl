@@ -150,11 +150,16 @@ include("function.jl")
 include("config_tree.jl")
 include("problem.jl")
 include("integrator.jl")
-include("solver.jl")
+include("solvers/common.jl")
+include("solvers/coefficients.jl")
+include("solvers/lie_trotter_godunov.jl")
+include("solvers/strang_marchuk.jl")
+include("solvers/tables.jl")
+include("solvers/adjoint_pair.jl")
 include("utils.jl")
 
 export GenericSplitFunction, OperatorSplittingProblem, LieTrotterGodunov, StrangMarchuk,
-    PalindromicPairLieTrotterGodunov
+    PalindromicPairLieTrotterGodunov, Ruth3, Yoshida4, AdjointPair
 export SplitNode, TreeOption
 
 include("precompilation.jl")

@@ -1,15 +1,25 @@
-# helper function for setting up min/max heaps for tstops and saveat
+"""
+    tstops_and_saveat_heaps(t0, tf, tstops, saveat)
+
+Build the `tstops` and `saveat` heaps of a node covering `t0` to `tf`.
+
+Both store **`tdir`-scaled** times, the convention OrdinaryDiffEqCore's
+`initialize_tstops` follows, so that "the next one" is always the heap minimum and
+"ahead of `t`" is always `key > tdir * t`, whichever way the node integrates. It is
+also what lets [`reverse_direction!`](@ref) flip a node by re-signing its keys: the
+alternative, storing raw times and encoding the direction in the heap's ordering,
+puts the direction in the heap's *type*, where it cannot be changed in place.
+"""
 function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     FT = typeof(tf)
-    ordering = tf > t0 ? BinaryHeaps.FasterForward : BinaryHeaps.FasterReverse
+    tdir = tf > t0 ? one(FT) : -one(FT)
 
     # ensure that tstops includes tf and only has values ahead of t0
     tstops = [filter(t -> t0 < t < tf || tf < t < t0, tstops)..., tf]
-    tstops = BinaryHeaps.BinaryHeap{FT, ordering}(tstops)
+    tstops = BinaryHeaps.BinaryHeap{FT, BinaryHeaps.FasterForward}(tdir .* tstops)
 
     # Keep `t0 < t <= tf` in tdir-space: `save_start` owns the initial point and
     # `save_end` the final one, so leaving either in the heap would duplicate it.
-    tdir = tf > t0 ? one(FT) : -one(FT)
     saveat = if isnothing(saveat)
         FT[]
     elseif saveat isa Number
@@ -19,7 +29,7 @@ function tstops_and_saveat_heaps(t0, tf, tstops, saveat)
     else
         filter(t -> tdir * t0 < tdir * t <= tdir * tf, collect(FT, saveat))
     end
-    saveat = BinaryHeaps.BinaryHeap{FT, ordering}(saveat)
+    saveat = BinaryHeaps.BinaryHeap{FT, BinaryHeaps.FasterForward}(tdir .* saveat)
 
     return tstops, saveat
 end
@@ -256,8 +266,73 @@ function _fix_dt_at_bounds!(integrator::AnySplitIntegrator)
     # over dtmax if the two conflict.
     dtmax = abs(integrator.opts.dtmax)
     dtmin = abs(DiffEqBase.timedepentdtmin(integrator))
-    integrator.dt = tdir(integrator) * max(min(abs(integrator.dt), dtmax), dtmin)
+    integrator.dt = integrator.tdir * max(min(abs(integrator.dt), dtmax), dtmin)
     return nothing
+end
+
+"""
+    reverse_direction!(integrator)
+
+Flip an already-initialized integrator's direction of integration in place.
+
+Negating `dt` alone does not work: `fix_dt_at_bounds!` re-signs it to `tdir` and would
+replace it with `+dtmin` before `perform_step!` saw it.
+
+The `tstops`/`saveat`/`d_discontinuities` heaps store `tdir`-scaled times, so negating
+every key re-expresses the same raw times under the new direction -- which inverts the
+heap order, hence the rebuild. Times now *behind* are dropped, because `handle_tstop!`
+errors on an unconsumed stop that `t` has passed.
+"""
+function reverse_direction!(integrator::DEIntegrator)
+    integrator.tdir = -integrator.tdir
+    integrator.dt = -integrator.dt
+    integrator.dtcache = -integrator.dtcache
+    integrator.dtpropose = -integrator.dtpropose
+
+    opts = integrator.opts
+    opts.dtmax = -opts.dtmax
+
+    threshold = integrator.tdir * integrator.t
+    _reverse_time_heap!(opts.tstops, threshold)
+    _reverse_time_heap!(opts.saveat, threshold)
+    _reverse_time_heap!(opts.d_discontinuities, threshold)
+
+    return integrator
+end
+
+function reverse_direction!(sub::SplitSubIntegrator)
+    sub.tdir = -sub.tdir
+    sub.dt = -sub.dt
+    sub.dtcache = -sub.dtcache
+
+    _reverse_time_heap!(sub.tstops, sub.tdir * sub.t)
+
+    # `add_tstop!` propagates eagerly to every descendant, so a child left facing the
+    # old direction would reject the reversed node's next tstop as behind it.
+    _reverse_children!(sub.child_subintegrators)
+
+    return sub
+end
+
+@unroll function _reverse_children!(children::Tuple)
+    @unroll for child in children
+        reverse_direction!(child)
+    end
+end
+
+function _reverse_time_heap!(heap, threshold)
+    isempty(heap) && return heap
+    # Drain first: the new keys are the negated old ones, so pushing them back into
+    # the heap being read from would corrupt the ordering mid-traversal.
+    old = [pop!(heap)]
+    while !isempty(heap)
+        push!(old, pop!(heap))
+    end
+    for key in old
+        reversed = -key
+        reversed > threshold && push!(heap, reversed)
+    end
+    return heap
 end
 
 # Check time-step information consistency

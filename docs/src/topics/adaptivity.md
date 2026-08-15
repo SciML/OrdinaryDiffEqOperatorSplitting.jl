@@ -6,10 +6,14 @@ Two independent layers of a splitting tree can adapt their step sizes:
   they would outside of this package. Their behavior is governed by the tolerances
   and options they receive.
 - **Splitting nodes** adapt the splitting step itself. This requires an algorithm
-  that produces an error estimate of the splitting error;
-  [`PalindromicPairLieTrotterGodunov`](@ref) is currently the only one. It advances
-  with the average of the two mutually reversed Lie-Trotter sequences and uses half
-  their difference as the local error estimate.
+  that produces an error estimate of the splitting error, which here means running a
+  scheme together with its adjoint: the average of the two is the solution and half
+  their difference is the local error estimate (see
+  [Adjoint pairs](@ref theory_higher-order)).
+  [`PalindromicPairLieTrotterGodunov`](@ref) is that construction for the
+  Lie-Trotter sequence, and [`AdjointPair`](@ref) builds it from any odd-order
+  scheme — `AdjointPair(Ruth3((Tsit5(), Tsit5())))` is a fourth-order adaptive
+  splitting. Both cost two sweeps per step.
 
 By default every node adapts exactly if its own algorithm can: for
 
