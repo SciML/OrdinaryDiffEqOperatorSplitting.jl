@@ -146,6 +146,7 @@ function SciMLBase.set_proposed_dt!(sub::SplitSubIntegrator, dt)
     end
     return nothing
 end
+SciMLBase.get_proposed_dt(sub::SplitSubIntegrator) = sub.dtcache
 
 
 """
