@@ -918,8 +918,10 @@ function _collect_inner_stats!(lines, child::DEIntegrator, path::Tuple)
         push!(lines, "$(_showpath(path)): no statistics available")
         return lines
     end
-    counters = ("steps" => :naccept, "rejected" => :nreject, "f" => :nf,
-                "jacs" => :njacs, "W" => :nw, "linsolve" => :nsolve)
+    counters = (
+        "steps" => :naccept, "rejected" => :nreject, "f" => :nf,
+        "jacs" => :njacs, "W" => :nw, "linsolve" => :nsolve,
+    )
     parts = [
         "$name=$(getfield(s, field))" for (name, field) in counters
             if hasfield(typeof(s), field)
