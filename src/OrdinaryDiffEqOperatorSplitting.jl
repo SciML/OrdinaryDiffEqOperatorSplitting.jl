@@ -22,7 +22,8 @@ import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isdtchangeable,
 
 # `@verbosity_specifier` expands to code referring to SciMLLogging's names (presets,
 # `MessageLevel`, `AbstractVerbosityPreset`) unqualified, so they have to be in scope.
-using SciMLLogging
+import SciMLLogging: @SciMLMessage, @verbosity_specifier, All, Detailed, InfoLevel,
+    Minimal, None, Silent, Standard
 
 # In OrdinaryDiffEq v7 / DiffEqBase v7, passing verbose::Bool to inner ODE
 # integrators is no longer supported. Convert Bool → DEVerbosity when available.
