@@ -28,6 +28,7 @@ import SciMLLogging: @SciMLMessage, @verbosity_specifier, All, Detailed, InfoLev
 # In OrdinaryDiffEq v7 / DiffEqBase v7, passing verbose::Bool to inner ODE
 # integrators is no longer supported. Convert Bool → DEVerbosity when available.
 @static if isdefined(DiffEqBase, :DEVerbosity)
+    import SciMLLogging: AbstractVerbosityPreset, MessageLevel
     """
         OperatorSplittingVerbosity
 
