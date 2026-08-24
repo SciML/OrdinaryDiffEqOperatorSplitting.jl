@@ -96,8 +96,54 @@ function forward_sync_subintegrator!(
         reset_next_sync_continuous(parent)
         return nothing
     end
+    # Hand an adaptive child its step size state for the substep it is about to solve.
+    #
+    #   * The standing proposal is *capped* at the substep length, never overwritten.
+    #     Capping keeps the child from re-entering with a proposal beyond the substep
+    #     (the sliver-regrowth problem), while a child whose converged step is a
+    #     fraction of the substep keeps it: unconditionally handing the whole substep
+    #     forces a guaranteed too-large first attempt -- one rejected step plus one
+    #     wasted `W` factorization on *every* substep once the inner step is small.
+    #
+    #   * The controller memory (`errold`/gain) is reset. The state was just rewritten
+    #     from the outside, so the stored error history belongs to a different
+    #     trajectory; carrying it makes the child's step sequence -- and through it the
+    #     splitting error estimate -- an erratic function of the outer step size.
+    #     Resetting it keeps the outer estimate smooth, which is what the outer
+    #     controller needs to propose acceptable steps.
+    #
+    # Only for adaptive children. `set_proposed_dt!` writes `dtcache` as well as
+    # `dtpropose`, and `dtcache` is exactly what a *fixed* step child reads to size its
+    # step -- overwriting it there discards a per-node `dt` and collapses multi-rate
+    # subcycling to one inner step per substep.
+    if _child_is_adaptive(child) && isdtchangeable(child)
+        if abs(SciMLBase.get_proposed_dt(child)) > abs(parent.dt)
+            set_proposed_dt!(child, parent.dt)
+        end
+        _reinit_child_controller!(child)
+    end
     forward_sync_internal!(parent.u, parent.uprev, child, solution_indices)
     @timeit_debug "external sync" forward_sync_external!(parent, child, sync)
+    return nothing
+end
+
+# Reset a leaf's step size controller memory at a synchronization point. Guarded by
+# `hasfield`: `controller_cache` is an OrdinaryDiffEqCore integrator field, and foreign
+# DEIntegrator implementations without one simply keep their controller state.
+#
+# The stock `reinit_controller!` semantics -- for a PI cache, `errold = qoldinit`
+# (1e-4), which throttles the first accepted steps of the substep through the
+# `errold^beta2` term -- is kept *deliberately*. It replays the start-of-integration
+# ramp at every synchronization, which on an operator whose converged step spans the
+# whole substep multiplies its step count (measured ~4x for Heun's PI default; BS3 and
+# Tsit5 defaults are unaffected). That cost is the fee for over-resolving the first
+# inner steps of each substep, which keeps the inner-error contamination of the
+# splitting error estimate below the outer controller's acceptance band. A "neutral"
+# reset (`errold = 1`) was measured to halve the cost but inflate the outer rejection
+# rate several-fold and the global error by an order of magnitude at tight tolerances.
+function _reinit_child_controller!(child::DEIntegrator)
+    hasfield(typeof(child), :controller_cache) || return nothing
+    OrdinaryDiffEqCore.reinit_controller!(child, child.controller_cache)
     return nothing
 end
 
@@ -105,6 +151,24 @@ end
 # FSAL information.
 function mark_state_modified!(child::DEIntegrator)
     SciMLBase.derivative_discontinuity!(child, true)
+    _suppress_duplicate_fsal_reeval!(child)
+    return nothing
+end
+
+# OrdinaryDiffEqCore 4.14.1 moved the `on_derivative_discontinuity_at_init!` call in
+# `loopheader!` out of its `iter == 0` branch, so a standing `derivative_discontinuity`
+# now fires it on every iteration -- on top of the per-step FSAL handling that already
+# consumes the flag. That is two derivative evaluations per substep instead of one.
+#
+# The new call is guarded by `!reeval_fsal`, so flagging the refresh as already
+# requested suppresses the duplicate. Only from `iter > 0`: before the first step
+# nothing else consumes the flag, and that path is what refreshes the stale derivative
+# the parent just invalidated.
+function _suppress_duplicate_fsal_reeval!(child)
+    if hasfield(typeof(child), :reeval_fsal) && hasfield(typeof(child), :iter) &&
+            child.iter > 0
+        child.reeval_fsal = true
+    end
     return nothing
 end
 

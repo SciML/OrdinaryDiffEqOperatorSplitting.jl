@@ -21,5 +21,14 @@ run_qa(
                 :failfactor_default,
             ),
         ),
+        no_stale_explicit_imports = (;
+            ignore = (
+                # `MessageLevel` is imported for the `@verbosity_specifier`
+                # expansion in src/OrdinaryDiffEqOperatorSplitting.jl, which
+                # validates toggle values against it. Source analysis cannot see
+                # a use inside a macro expansion, so the import reads as stale.
+                :MessageLevel,
+            ),
+        ),
     ),
 )
