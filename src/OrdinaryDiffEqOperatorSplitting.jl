@@ -20,15 +20,19 @@ import OrdinaryDiffEqCore: OrdinaryDiffEqCore, isdtchangeable,
     stepsize_controller!, step_accept_controller!, step_reject_controller!,
     accept_step_controller
 
-# `@verbosity_specifier` expands to code referring to SciMLLogging's names (presets,
-# `MessageLevel`, `AbstractVerbosityPreset`) unqualified, so they have to be in scope.
-import SciMLLogging: @SciMLMessage, @verbosity_specifier, All, Detailed, InfoLevel,
-    Minimal, None, Silent, Standard
+# `@verbosity_specifier` expands to code referring to SciMLLogging's names unqualified,
+# so they have to be in scope: the presets handed to it below, plus `Standard`,
+# `MessageLevel`, `AbstractVerbosityPreset` and `AbstractVerbositySpecifier`, which the
+# generated constructor validates a caller's arguments against. Of those, only
+# `MessageLevel` appears in no source line here, so source analysis reads it as a stale
+# import -- hence the `no_stale_explicit_imports` ignore in test/qa/qa.jl.
+import SciMLLogging: @SciMLMessage, @verbosity_specifier, AbstractVerbosityPreset,
+    AbstractVerbositySpecifier, All, Detailed, InfoLevel, MessageLevel, Minimal, None,
+    Silent, Standard
 
 # In OrdinaryDiffEq v7 / DiffEqBase v7, passing verbose::Bool to inner ODE
 # integrators is no longer supported. Convert Bool → DEVerbosity when available.
 @static if isdefined(DiffEqBase, :DEVerbosity)
-    import SciMLLogging: AbstractVerbosityPreset, MessageLevel
     """
         OperatorSplittingVerbosity
 
@@ -126,8 +130,16 @@ import SciMLLogging: @SciMLMessage, @verbosity_specifier, All, Detailed, InfoLev
     _process_verbose(verbose::DiffEqBase.DEVerbosity) = OperatorSplittingVerbosity(;
         preset = SciMLLogging.Minimal(), inner_verbosity = verbose
     )
-    _process_verbose(preset::SciMLLogging.AbstractVerbosityPreset) =
+    _process_verbose(preset::AbstractVerbosityPreset) =
         OperatorSplittingVerbosity(preset)
+    # A `Bool` says how loud the inner integrators should be and nothing about the
+    # splitting diagnostics, which both presets leave silent -- `verbose = true` keeps
+    # meaning what it meant before this node had diagnostics of its own. Left
+    # unconverted it would reach `@SciMLMessage` as a `Bool`, where `true` enables
+    # *every* toggle and logs a message per step.
+    _process_verbose(verbose::Bool) = OperatorSplittingVerbosity(
+        verbose ? SciMLLogging.Minimal() : SciMLLogging.None()
+    )
 else
     const DEFAULT_VERBOSITY = false
 end
@@ -139,7 +151,7 @@ _process_verbose(verbose) = verbose
 # used in a boolean context directly.
 _is_verbose(verbose::Bool) = verbose
 _is_verbose(verbose) = true
-_is_verbose(::SciMLLogging.AbstractVerbositySpecifier{B}) where {B} = B
+_is_verbose(::AbstractVerbositySpecifier{B}) where {B} = B
 
 """
     AbstractOperatorSplitFunction
