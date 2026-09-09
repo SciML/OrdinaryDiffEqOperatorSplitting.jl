@@ -21,6 +21,42 @@ end
     DiffEqBase.u_modified!(m::MockLeaf, b) = m.u_modified = b
 end
 
+@testset "need_sync" begin
+    # A device array package's own contiguous view (e.g. GPUArrays' `derive`) comes
+    # back as a *new* dense wrapper over the same buffer, not a `SubArray`. Emulate
+    # that aliasing relationship on the host with `unsafe_wrap` over the same
+    # pointer; `a` must outlive the wrap, hence `GC.@preserve`.
+    @testset "aliasing dense vectors need no sync" begin
+        a = [1.0, 2.0, 3.0]
+        GC.@preserve a begin
+            b = unsafe_wrap(Array, pointer(a), length(a))
+            @test !OS.need_sync(a, b)
+            @test !OS.need_sync(b, a)
+        end
+    end
+
+    @testset "non-aliasing dense vectors need a sync" begin
+        a = [1.0, 2.0, 3.0]
+        b = [1.0, 2.0, 3.0]  # equal content, distinct memory
+        c = [4.0, 5.0, 6.0]  # distinct content and memory
+        @test OS.need_sync(a, b)
+        @test OS.need_sync(a, c)
+    end
+
+    @testset "SubArray cases are unchanged" begin
+        parent = [1.0, 2.0, 3.0]
+        other = [1.0, 2.0, 3.0]
+        view_of_parent = view(parent, 1:2)
+
+        @test !OS.need_sync(view_of_parent, parent)
+        @test OS.need_sync(view_of_parent, other)
+        @test !OS.need_sync(parent, view_of_parent)
+        @test OS.need_sync(other, view_of_parent)
+        @test !OS.need_sync(view(parent, 1:2), view(parent, 1:3)) # same parent
+        @test OS.need_sync(view(parent, 1:2), view(other, 1:2))   # different parent
+    end
+end
+
 @testset "Nested children address their parent's buffers" begin
     # dof indices are parent-relative at every level, so a grandchild's initial
     # state is parent-slice-of-parent-slice -- NOT the root vector indexed with
