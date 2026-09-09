@@ -18,6 +18,7 @@ TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 Unrolled = "9602ed7d-8fef-5bc8-8597-8f21381861e8"
 
 [compat]
+Symbolics = "7.39.2"
 BinaryHeaps = "1.0.0"
 CommonSolve = "0.2.4"
 DiffEqBase = "7.5"
@@ -39,6 +40,7 @@ Unrolled = "0.1.5"
 julia = "1.10"
 
 [extras]
+Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
 OrdinaryDiffEqTsit5 = "b1df2697-797e-41e3-8120-5422d3b24e4a"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
@@ -47,4 +49,4 @@ SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["ModelingToolkit", "OrdinaryDiffEqTsit5", "SafeTestsets", "SciMLIterators", "SciMLTesting", "Test"]
+test = ["Symbolics", "ModelingToolkit", "OrdinaryDiffEqTsit5", "SafeTestsets", "SciMLIterators", "SciMLTesting", "Test"]
