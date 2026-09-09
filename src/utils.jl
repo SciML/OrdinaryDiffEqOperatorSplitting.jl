@@ -34,13 +34,25 @@ Return whether copying solution information from `b` into `a` is necessary.
 - `b`: Source vector or view.
 
 # Returns
-`false` when both arguments share the same backing storage and copying would be
-redundant; `true` otherwise. Extend this function for custom array wrappers whose
-aliasing relationship cannot be determined by the built-in vector methods.
+`false` when both arguments provably share the same backing storage and copying
+would be redundant; `true` otherwise (including whenever that cannot be decided
+cheaply). `SubArray` arguments are compared by parent identity. Plain
+`DenseVector`s -- which includes a GPU array package's own contiguous view, since
+those are commonly returned as a *new* dense wrapper over the same buffer rather
+than a `SubArray` -- are compared by base pointer and length: equal on both means
+the same memory. Extend this function for custom array wrappers whose aliasing
+relationship cannot be determined by the built-in methods.
 """
 need_sync
 
-need_sync(a::AbstractVector, b::AbstractVector) = true
+# Same dense memory extent ⇒ the copy would be a self-copy. `pointer` on a
+# `DenseVector` is a cheap host-side field read (no device sync, even for a GPU
+# array), so this stays cheap enough to call on every sync.
+_same_memory(a, b) = false
+_same_memory(a::DenseVector{T}, b::DenseVector{T}) where {T} =
+    pointer(a) == pointer(b) && length(a) == length(b)
+
+need_sync(a::AbstractVector, b::AbstractVector) = !_same_memory(a, b)
 need_sync(a::SubArray, b::AbstractVector) = a.parent !== b
 need_sync(a::AbstractVector, b::SubArray) = a !== b.parent
 need_sync(a::SubArray, b::SubArray) = a.parent !== b.parent
