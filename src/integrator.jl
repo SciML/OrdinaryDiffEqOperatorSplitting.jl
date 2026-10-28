@@ -8,8 +8,8 @@ IntegratorStats() = IntegratorStats(0, 0)
 
 Base.@kwdef mutable struct IntegratorOptions{tType, fType, vbType, F3, atolType, rtolType, normType}
     adaptive::Bool
-    dtmin::tType = eps(Float64)
-    dtmax::tType = Inf
+    dtmin::tType
+    dtmax::tType
     failfactor::fType = 4.0
     verbose::vbType = DEFAULT_VERBOSITY
     isoutofdomain::F3 = DiffEqBase.ODE_DEFAULT_ISOUTOFDOMAIN
