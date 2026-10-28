@@ -146,6 +146,16 @@ end
 _inner_verbose(verbose) = verbose
 _process_verbose(verbose) = verbose
 
+"""
+    inner_verbosity(verbose)
+
+The verbosity a leaf integrator under a splitting node runs with: the `inner_verbosity`
+of an [`OperatorSplittingVerbosity`](@ref), or `verbose` itself where it already is a
+leaf setting. A leaf integrator built from `config.values.verbose` passes it through
+here; the splitting toggles live on the node, not on its leaves.
+"""
+inner_verbosity(verbose) = _inner_verbose(verbose)
+
 # `verbose` reaches us either as a Bool or, through DiffEqBase v7's `init`, as a
 # verbosity specifier whose first type parameter is the on/off flag. Neither can be
 # used in a boolean context directly.
