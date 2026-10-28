@@ -433,10 +433,12 @@ function split_integrator_options(values::NamedTuple)
     # `dtmin` and `dtmax` share the node's time type: a `Float32` time span with the
     # default `dtmin` would otherwise leave the two with no common type parameter.
     T = typeof(values.dt)
-    opts = merge(opts, (;
-        dtmin = T(get(opts, :dtmin, default_dtmin(T))),
-        dtmax = T(get(opts, :dtmax, typemax(T))),
-    ))
+    opts = merge(
+        opts, (;
+            dtmin = T(get(opts, :dtmin, default_dtmin(T))),
+            dtmax = T(get(opts, :dtmax, typemax(T))),
+        )
+    )
     return IntegratorOptions(; verbose = values.verbose, adaptive = values.adaptive, opts...)
 end
 default_dtmin(::Type{T}) where {T <: AbstractFloat} = eps(T)
