@@ -1146,7 +1146,11 @@ end
     return current_retcode
 end
 
-_child_retcode(child::DEIntegrator) = SciMLBase.check_error(child)
+# The stored retcodes, for leaves as for nodes: every child was examined through
+# `child_failed` right after it stepped, and a failure found there was either retried
+# from a clean rollback or escalated into this node's own retcode. Running the leaves'
+# `check_error` again here would scan the same state a second time.
+_child_retcode(child::DEIntegrator) = child.sol.retcode
 _child_retcode(child::SplitSubIntegrator) = child.status.retcode
 
 function setup_u(prob::OperatorSplittingProblem, solver, alias_u0)

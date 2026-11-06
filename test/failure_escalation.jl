@@ -110,6 +110,41 @@ PPLTG = PalindromicPairLieTrotterGodunov
         @test integ.t < 1.0  # aborted mid-solve, nobody could retry
     end
 
+    @testset "A failed step leaves the last accepted state behind" begin
+        fail_from(du, u, p, t) = t < 0.25 ? odeB(du, u, p, t) : (du .= NaN; nothing)
+        f = GenericSplitFunction((fA, ODEFunction(fail_from)), (dofs, dofs))
+        prob = OperatorSplittingProblem(f, copy(u0), (0.0, 1.0))
+        integ = DiffEqBase.init(
+            prob, LieTrotterGodunov((Euler(), Euler())); dt = 0.1, verbose = false
+        )
+        for _ in 1:3
+            DiffEqBase.step!(integ)
+        end
+        @test integ.sol.retcode == ReturnCode.Default
+        ulast, tlast = copy(integ.u), integ.t
+        DiffEqBase.step!(integ)
+        @test integ.sol.retcode == ReturnCode.Unstable
+        @test integ.t == tlast
+        @test integ.u == ulast
+    end
+
+    @testset "check_error at the root reads the leaves' verdicts" begin
+        # The leaves were examined by `child_failed` right after they stepped; the
+        # root's own check must not scan their state again.
+        scans = Ref(0)
+        counting = (dt, u, p, t) -> (scans[] += 1; any(isnan, u))
+        f = GenericSplitFunction((fA, ODEFunction(odeB)), (dofs, dofs))
+        prob = OperatorSplittingProblem(f, copy(u0), (0.0, 1.0))
+        integ = DiffEqBase.init(
+            prob, LieTrotterGodunov((Euler(), Euler())); dt = 0.1, unstable_check = counting
+        )
+        DiffEqBase.step!(integ)
+        n = scans[]
+        @test n > 0
+        @test SciMLBase.check_error(integ) == ReturnCode.Default
+        @test scans[] == n
+    end
+
     @testset "Rollback clears sticky Newton-style leaf failure flags" begin
         # SciMLBase's generic check_error re-derives ConvergenceFailure from
         # `last_stepfail` on non-adaptive leaves even after the retcode is reset,
