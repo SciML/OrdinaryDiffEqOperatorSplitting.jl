@@ -134,7 +134,7 @@ function forward_sync_subintegrator!(
         end
         _reinit_child_controller!(child)
     end
-    forward_sync_internal!(parent.u, parent.uprev, child, solution_indices)
+    forward_sync_internal!(parent.u, child, solution_indices)
     @timeit_debug "external sync" forward_sync_external!(parent, child, sync)
     return nothing
 end
@@ -184,20 +184,14 @@ function _suppress_duplicate_fsal_reeval!(child)
     return nothing
 end
 
-# Shared internal helper: copy the parent u slice → child DEIntegrator u/uprev.
-# `uprev_parent` is the parent's rollback buffer: the refresh of the child's own
-# rollback anchor must never write through a child `uprev` that aliases it, because
-# that buffer has to survive the whole step untouched (rejection and the palindromic
-# mid-step rewind restore from it). When they alias, the slice already holds the
-# interval start state and no copy is needed.
-function forward_sync_internal!(u_source, uprev_parent, child::DEIntegrator, solution_indices)
+# Shared internal helper: copy the parent u slice → child DEIntegrator u. The child's
+# rollback anchor `uprev` is the child's own business: `mark_state_modified!` tells it
+# that `u` changed from the outside, and a leaf refreshes `uprev` from `u` in the header
+# of its next step anyway (OrdinaryDiffEqCore in `on_derivative_discontinuity_at_init!`
+# and `apply_step!`). Copying it here as well would write the same state twice.
+function forward_sync_internal!(u_source, child::DEIntegrator, solution_indices)
     @views usrc = u_source[solution_indices]
-    @timeit_debug "sync vectors" begin
-        sync_vectors!(child.u, usrc)
-        if need_sync(child.uprev, uprev_parent)
-            sync_vectors!(child.uprev, child.u)
-        end
-    end
+    @timeit_debug "sync vectors" sync_vectors!(child.u, usrc)
     mark_state_modified!(child)
     return nothing
 end

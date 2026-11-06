@@ -82,29 +82,28 @@ end
 end
 
 @testset "forward_sync_internal!" begin
-    @testset "independent child buffers are synced" begin
+    @testset "the child state is synced, its rollback anchor is left to the child" begin
         u_parent = [1.0, 2.0, 3.0]
-        uprev_parent = [10.0, 20.0, 30.0]
         idxs = [1, 2]
         child = MockLeaf([0.0, 0.0], [0.0, 0.0], false)
 
-        OS.forward_sync_internal!(u_parent, uprev_parent, child, idxs)
+        OS.forward_sync_internal!(u_parent, child, idxs)
         @test child.u == u_parent[idxs]
-        @test child.uprev == u_parent[idxs]
+        @test child.uprev == [0.0, 0.0]
         @test child.u_modified
     end
 
-    @testset "a child uprev aliasing the parent rollback buffer survives" begin
-        # A child whose uprev is a view into the parent's uprev: the sync must not
-        # scribble on the parent's rollback anchor mid-step.
-        u_parent = [1.0, 2.0, 3.0]
-        uprev_parent = [10.0, 20.0, 30.0]
-        idxs = [1, 2]
-        child = MockLeaf([0.0, 0.0], view(uprev_parent, idxs), false)
-
-        OS.forward_sync_internal!(u_parent, uprev_parent, child, idxs)
-        @test child.u == u_parent[idxs]
-        @test uprev_parent == [10.0, 20.0, 30.0]  # untouched
-        @test child.u_modified
+    @testset "a leaf steps from the synced state" begin
+        # The leaf refreshes its own `uprev` from the synced `u` before it steps: with
+        # overlapping slices the second operator has to start from what the first left.
+        ode1(du, u, p, t) = (du .= 1.0; nothing)
+        ode2(du, u, p, t) = (du .= u; nothing)
+        u0 = [1.0, 2.0]
+        f = GenericSplitFunction((ODEFunction(ode1), ODEFunction(ode2)), ([1, 2], [1, 2]))
+        prob = OperatorSplittingProblem(f, u0, (0.0, 1.0))
+        integ = DiffEqBase.init(prob, LieTrotterGodunov((Euler(), Euler())); dt = 0.5)
+        DiffEqBase.step!(integ)
+        u1 = u0 .+ 0.5
+        @test integ.u ≈ u1 .+ 0.5 .* u1
     end
 end
